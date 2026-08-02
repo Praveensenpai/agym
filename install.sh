@@ -5,6 +5,7 @@ GREEN='\033[0;32m'
 PURPLE='\033[0;35m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 BOLD='\033[1m'
 NC='\033[0m'
 
@@ -13,19 +14,24 @@ echo -e "${PURPLE}🚀 Installing agym (Unified Antigravity CLI Manager)...${NC}
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 AGYM_SRC="$SCRIPT_DIR/bin/agym"
+RAW_URL="https://raw.githubusercontent.com/Praveensenpai/agym/main/bin/agym"
 
-if [ ! -f "$AGYM_SRC" ]; then
-    echo -e "${RED}❌ Error: $AGYM_SRC not found!${NC}"
+if [ -f "$AGYM_SRC" ]; then
+    cp "$AGYM_SRC" "$BIN_DIR/agym"
+else
+    echo -e "${BLUE}📦 Downloading agym binary from GitHub...${NC}"
+    curl -sSL "$RAW_URL" -o "$BIN_DIR/agym"
+fi
+
+if [ ! -f "$BIN_DIR/agym" ] || [ ! -s "$BIN_DIR/agym" ]; then
+    echo -e "${RED}❌ Error: Failed to download agym binary!${NC}"
     exit 1
 fi
 
-chmod +x "$AGYM_SRC"
-cp "$AGYM_SRC" "$BIN_DIR/agym"
 chmod +x "$BIN_DIR/agym"
-
-echo -e "${GREEN}✔ Installed agym to ${BIN_DIR}/.${NC}"
+echo -e "${GREEN}✔ Installed agym to ${BIN_DIR}/agym${NC}"
 
 # Shell alias setup
 SHELL_CONFIGS=("$HOME/.bashrc" "$HOME/.zshrc")
