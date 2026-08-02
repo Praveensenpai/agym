@@ -1,0 +1,600 @@
+#!/usr/bin/env bash
+
+# agym: Unified Antigravity CLI Session & Account Manager
+
+ACCOUNTS_DIR="$HOME/.gemini-accounts"
+DB_PATH="$HOME/.antigravity-agent/cloud_accounts.db"
+GEMINI_LINK="$HOME/.gemini"
+PROFILES_DIR="$HOME/.gemini-profiles"
+
+mkdir -p "$ACCOUNTS_DIR" "$PROFILES_DIR"
+
+# Dracula / Cyberpunk Color Palette
+CYAN="\033[38;2;139;233;253m"
+GREEN="\033[38;2;80;250;123m"
+YELLOW="\033[38;2;241;250;140m"
+PINK="\033[38;2;255;121;198m"
+PURPLE="\033[38;2;189;147;249m"
+ORANGE="\033[38;2;255;184;108m"
+RED="\033[38;2;255;85;85m"
+GRAY="\033[38;2;98;114;164m"
+BOLD="\033[1m"
+RESET="\033[0m"
+
+# -----------------------------------------------------------------------------
+# Session Picker
+# -----------------------------------------------------------------------------
+pick_session() {
+    local brain_paths=(
+        "$HOME/.gemini/antigravity-cli/brain"
+        "$HOME/.gemini-profiles"/*/"antigravity-cli/brain"
+        "$HOME/.gemini-profiles"/*/"gemini/antigravity-cli/brain"
+    )
+
+    local sessions
+    sessions=$(
+        for glob_path in "${brain_paths[@]}"; do
+            for log in $glob_path/*/.system_generated/logs/transcript.jsonl; do
+                [ -f "$log" ] || continue
+                local cid
+                cid=$(basename "$(dirname "$(dirname "$(dirname "$log")")")")
+                local mtime
+                mtime=$(stat -c %Y "$log")
+                local prompt
+                prompt=$(jq -r 'select(.type=="USER_INPUT") | .content' "$log" 2>/dev/null | sed -E 's/<[^>]+>//g' | grep -v '^[[:space:]]*$' | head -n 1 | tr '\n' ' ')
+                if [ -n "$prompt" ]; then
+                    local dt
+                    dt=$(date -d "@$mtime" "+%Y-%m-%d %H:%M" 2>/dev/null || date -r "$mtime" "+%Y-%m-%d %H:%M")
+                    echo "$dt │ $cid │ $prompt"
+                fi
+            done
+        done | sort -u -r -k1,2
+    )
+
+    if [ -z "$sessions" ]; then
+        echo "No AGY sessions found."
+        exit 0
+    fi
+
+    local fzf_colors="bg+:#282a36,bg:#1e1e2e,spinner:#ff79c6,hl:#bd93f9,fg:#f8f8f2,header:#8be9fd,info:#ffb86c,pointer:#ff79c6,marker:#ff79c6,fg+:#f8f8f2,prompt:#50fa7b"
+
+    local selected
+    selected=$(echo "$sessions" | fzf \
+        --ansi \
+        --height 60% \
+        --layout=reverse \
+        --border=rounded \
+        --prompt="🔍 Search Session > " \
+        --header="[ ENTER: Resume Session | ESC: Exit ]" \
+        --color="$fzf_colors" \
+        --delimiter="│" \
+        --with-nth=1,3)
+
+    if [ -z "$selected" ]; then
+        echo "Cancelled."
+        exit 0
+    fi
+
+    local cid
+    cid=$(echo "$selected" | awk -F"│" '{print $2}' | tr -d ' ')
+
+    if [ -n "$cid" ]; then
+        echo -e "${GREEN}▶ Resuming session:${RESET} ${CYAN}$cid${RESET}"
+        exec agy --conversation "$cid"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Account Management Helper Functions
+# -----------------------------------------------------------------------------
+get_current_keyring_token() {
+    secret-tool lookup service gemini username antigravity 2>/dev/null
+}
+
+extract_email_from_token_json() {
+    local token_json="$1"
+    local id_tok
+    id_tok=$(echo "$token_json" | jq -r '.id_token // empty' 2>/dev/null)
+    if [ -z "$id_tok" ]; then
+        id_tok=$(echo "$token_json" | jq -r '.token' | jq -r '.id_token // empty' 2>/dev/null)
+    fi
+    if [ -n "$id_tok" ]; then
+        local payload
+        payload=$(echo "$id_tok" | cut -d'.' -f2)
+        local mod=$((${#payload} % 4))
+        if [ $mod -eq 2 ]; then payload="${payload}=="; elif [ $mod -eq 3 ]; then payload="${payload}="; fi
+        echo "$payload" | base64 -d 2>/dev/null | jq -r '.email // empty' 2>/dev/null
+    fi
+}
+
+save_current_account() {
+    local token_json
+    token_json=$(get_current_keyring_token)
+    [ -z "$token_json" ] && return 1
+    local email
+    email=$(extract_email_from_token_json "$token_json")
+    if [ -n "$email" ]; then
+        echo "$token_json" > "$ACCOUNTS_DIR/$email.json"
+        echo "$email"
+        return 0
+    fi
+    return 1
+}
+
+write_keyring_token() {
+    local token_json="$1"
+    secret-tool store --label="Password for 'antigravity' on 'gemini'" service gemini username antigravity <<< "$token_json"
+}
+
+update_sqlite_db() {
+    local email="$1"
+    if [ -f "$DB_PATH" ]; then
+        sqlite3 "$DB_PATH" "UPDATE accounts SET is_active = 0; UPDATE accounts SET is_active = 1 WHERE email LIKE '%$email%';" 2>/dev/null
+    fi
+}
+
+update_gemini_profile() {
+    local email="$1"
+    local prefix="${email%%@*}"
+    local prof_dir="$PROFILES_DIR/$prefix"
+    mkdir -p "$prof_dir"
+
+    if [ ! -L "$GEMINI_LINK" ] && [ -d "$GEMINI_LINK" ]; then
+        mv "$GEMINI_LINK" "${prof_dir}_backup"
+    elif [ -L "$GEMINI_LINK" ]; then
+        rm -f "$GEMINI_LINK"
+    fi
+
+    ln -s "$prof_dir" "$GEMINI_LINK"
+}
+
+get_saved_accounts() {
+    save_current_account >/dev/null
+    for f in "$ACCOUNTS_DIR"/*.json; do
+        [ -f "$f" ] || continue
+        basename "$f" .json
+    done | sort
+}
+
+set_active_account() {
+    local target="$1"
+    save_current_account >/dev/null
+    local saved
+    saved=$(get_saved_accounts)
+    
+    local matching
+    matching=$(echo "$saved" | grep -i "$target" | head -n 1)
+
+    if [ -z "$matching" ]; then
+        echo -e "${RED}Error: Account matching '$target' not found in saved accounts.${RESET}"
+        echo -e "\nSaved accounts:"
+        list_accounts
+        exit 1
+    fi
+
+    local target_email="$matching"
+    local token_file="$ACCOUNTS_DIR/$target_email.json"
+    local token_json
+    token_json=$(cat "$token_file")
+
+    write_keyring_token "$token_json"
+    update_sqlite_db "$target_email"
+    update_gemini_profile "$target_email"
+
+    echo -e "${GREEN}✔ Switched active AGY account to: ${CYAN}$target_email${RESET}"
+}
+
+list_accounts() {
+    save_current_account >/dev/null
+    local current_token
+    current_token=$(get_current_keyring_token)
+    local current_email=""
+    [ -n "$current_token" ] && current_email=$(extract_email_from_token_json "$current_token")
+
+    local saved
+    saved=$(get_saved_accounts)
+    echo -e "${CYAN}✨ SAVED AGY ACCOUNTS${RESET}"
+    echo "-----------------------------------"
+    for email in $saved; do
+        if [ "$email" = "$current_email" ]; then
+            echo -e "  ${GREEN}* $email (active)${RESET}"
+        else
+            echo "    $email"
+        fi
+    done
+}
+
+format_relative_time() {
+    local ts="$1"
+    [ -z "$ts" ] && { echo "Never"; return; }
+    local now
+    now=$(date +%s)
+    local diff=$((now - ts))
+    if [ $diff -lt 60 ]; then
+        echo "Just now"
+    elif [ $diff -lt 3600 ]; then
+        echo "$((diff / 60))m ago"
+    elif [ $diff -lt 86400 ]; then
+        echo "$((diff / 3600))h ago"
+    else
+        echo "$((diff / 86400))d ago"
+    fi
+}
+
+get_last_used() {
+    local email="$1"
+    local prefix="${email%%@*}"
+    local possible_dirs=(
+        "$PROFILES_DIR/$prefix/antigravity-cli/brain"
+        "$PROFILES_DIR/$prefix/gemini/antigravity-cli/brain"
+    )
+    if [ -L "$GEMINI_LINK" ]; then
+        local target
+        target=$(readlink "$GEMINI_LINK")
+        if [[ "$target" == *"$prefix"* ]]; then
+            possible_dirs+=("$HOME/.gemini/antigravity-cli/brain")
+        fi
+    fi
+
+    local latest_time=0
+    for bdir in "${possible_dirs[@]}"; do
+        [ -d "$bdir" ] || continue
+        for log in "$bdir"/*/.system_generated/logs/transcript.jsonl; do
+            [ -f "$log" ] || continue
+            local mtime
+            mtime=$(stat -c %Y "$log" 2>/dev/null)
+            if [ -n "$mtime" ] && [ "$mtime" -gt "$latest_time" ]; then
+                latest_time="$mtime"
+            fi
+        done
+    done
+
+    if [ "$latest_time" -gt 0 ]; then
+        local dt
+        dt=$(date -d "@$latest_time" "+%Y-%m-%d %H:%M" 2>/dev/null || date -r "$latest_time" "+%Y-%m-%d %H:%M")
+        local rel
+        rel=$(format_relative_time "$latest_time")
+        echo "$dt ($rel)"
+    else
+        echo "Never"
+    fi
+}
+
+fetch_account_models() {
+    local acc_path="$1"
+    local tok_json
+    tok_json=$(cat "$acc_path")
+    
+    local access_tok
+    access_tok=$(echo "$tok_json" | jq -r '.token' | jq -r '.access_token' 2>/dev/null)
+    if [ -z "$access_tok" ] || [ "$access_tok" = "null" ]; then
+        access_tok=$(echo "$tok_json" | jq -r '.access_token // empty' 2>/dev/null)
+    fi
+    local refresh_tok
+    refresh_tok=$(echo "$tok_json" | jq -r '.token' | jq -r '.refresh_token // empty' 2>/dev/null)
+    if [ -z "$refresh_tok" ] || [ "$refresh_tok" = "null" ]; then
+        refresh_tok=$(echo "$tok_json" | jq -r '.refresh_token // empty' 2>/dev/null)
+    fi
+
+    [ -z "$access_tok" ] && return 1
+
+    local url="https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+    local res
+    res=$(curl -s -m 10 -X POST "$url" \
+        -H "Authorization: Bearer $access_tok" \
+        -H "Content-Type: application/json" \
+        -H "User-Agent: Antigravity/1.0" \
+        -d "{}")
+
+    local has_models
+    has_models=$(echo "$res" | jq -r '.models != null' 2>/dev/null)
+    if [ "$has_models" != "true" ] && [ -n "$refresh_tok" ]; then
+        local ref_res
+        ref_res=$(curl -s -m 10 -X POST "https://oauth2.googleapis.com/token" \
+            -d "grant_type=refresh_token&refresh_token=$refresh_tok&client_id=764086051850-6qr4p6gpi6hn506pt8ejuq83di341pvb.apps.googleusercontent.com")
+        local new_access
+        new_access=$(echo "$ref_res" | jq -r '.access_token // empty')
+        if [ -n "$new_access" ]; then
+            access_tok="$new_access"
+            local updated_json
+            updated_json=$(jq --arg na "$new_access" 'if (.token | type == "string") then .token = (.token | fromjson | .access_token = $na | tojson) elif (.token | type == "object") then .token.access_token = $na else .access_token = $na end' "$acc_path" 2>/dev/null)
+            if [ -n "$updated_json" ]; then
+                echo "$updated_json" > "$acc_path"
+            fi
+            res=$(curl -s -m 10 -X POST "$url" \
+                -H "Authorization: Bearer $access_tok" \
+                -H "Content-Type: application/json" \
+                -H "User-Agent: Antigravity/1.0" \
+                -d "{}")
+        fi
+    fi
+
+    echo "$res"
+}
+
+make_progress_bar() {
+    local frac="$1"
+    if [ -z "$frac" ] || [ "$frac" = "null" ]; then
+        echo -e "${GRAY}[───────────────] N/A${RESET}"
+        return
+    fi
+    local percent
+    percent=$(awk -v f="$frac" 'BEGIN { printf "%.1f", f * 100 }')
+    local filled
+    filled=$(awk -v f="$frac" 'BEGIN { printf "%d", int(f * 15 + 0.5) }')
+    [ "$filled" -gt 15 ] && filled=15
+    [ "$filled" -lt 0 ] && filled=0
+    local empty=$((15 - filled))
+
+    local bar_color="$RED"
+    local cmp
+    cmp=$(awk -v f="$frac" 'BEGIN { if (f > 0.5) print 2; else if (f > 0.2) print 1; else print 0 }')
+    if [ "$cmp" -eq 2 ]; then bar_color="$GREEN"; elif [ "$cmp" -eq 1 ]; then bar_color="$YELLOW"; fi
+
+    local filled_bar=""
+    for ((i=0; i<filled; i++)); do filled_bar="${filled_bar}█"; done
+    local empty_bar=""
+    for ((i=0; i<empty; i++)); do empty_bar="${empty_bar}░"; done
+
+    local fmt_pct
+    fmt_pct=$(printf "%5.1f" "$percent")
+    echo -e "[${bar_color}${filled_bar}${GRAY}${empty_bar}${RESET}] ${bar_color}${fmt_pct}%${RESET}"
+}
+
+format_reset_time() {
+    local reset_str="$1"
+    [ -z "$reset_str" ] || [ "$reset_str" = "null" ] && { echo -e "${GRAY}No reset info${RESET}"; return; }
+    
+    local reset_sec
+    reset_sec=$(date -d "$reset_str" +%s 2>/dev/null || date -u -d "$reset_str" +%s 2>/dev/null)
+    [ -z "$reset_sec" ] && { echo -e "${GRAY}$reset_str${RESET}"; return; }
+
+    local now_sec
+    now_sec=$(date +%s)
+    local diff=$((reset_sec - now_sec))
+    if [ $diff -le 0 ]; then
+        echo -e "${GREEN}Resets now${RESET}"
+        return
+    fi
+
+    local hrs=$((diff / 3600))
+    local mins=$(((diff % 3600) / 60))
+    if [ $hrs -gt 24 ]; then
+        echo -e "${GRAY}Resets in $((hrs / 24))d $((hrs % 24))h${RESET}"
+    elif [ $hrs -gt 0 ]; then
+        echo -e "${GRAY}Resets in ${hrs}h ${mins}m${RESET}"
+    else
+        echo -e "${GRAY}Resets in ${mins}m${RESET}"
+    fi
+}
+
+show_stats() {
+    local verbose="$1"
+    save_current_account >/dev/null
+    local current_token
+    current_token=$(get_current_keyring_token)
+    local active_email=""
+    [ -n "$current_token" ] && active_email=$(extract_email_from_token_json "$current_token")
+
+    local acc_files
+    acc_files=$(ls "$ACCOUNTS_DIR"/*.json 2>/dev/null | sort)
+    if [ -z "$acc_files" ]; then
+        echo -e "${RED}No saved accounts found.${RESET}"
+        return
+    fi
+
+    echo -e "\n${BOLD}${PURPLE}╭──────────────────────────────────────────────────────────────╮${RESET}"
+    echo -e "${BOLD}${PURPLE}│ ${CYAN}✨ AGY ACCOUNTS QUOTA & MODEL STATS${PURPLE}                         │${RESET}"
+    echo -e "${BOLD}${PURPLE}╰──────────────────────────────────────────────────────────────╯${RESET}\n"
+
+    local primary_mids=(
+        "gemini-3.6-flash-high"
+        "gemini-3.1-pro-high"
+        "claude-sonnet-4-6"
+        "claude-opus-4-6-thinking"
+        "gpt-oss-120b-medium"
+    )
+    local primary_labels=(
+        "⚡ Gemini 3.6 Flash"
+        "🧠 Gemini 3.1 Pro"
+        "🎭 Claude Sonnet 4.6"
+        "🔮 Claude Opus 4.6"
+        "🤖 GPT 120B Medium"
+    )
+
+    for f in $acc_files; do
+        local email
+        email=$(basename "$f" .json)
+        local is_active=false
+        [ "$email" = "$active_email" ] && is_active=true
+
+        local status_badge
+        if [ "$is_active" = true ]; then
+            status_badge="${GREEN}★ ACTIVE${RESET}"
+            email_display=$(printf "${BOLD}${CYAN}%-34s${RESET}" "$email")
+        else
+            status_badge="${GRAY}  INACTIVE${RESET}"
+            email_display=$(printf "${BOLD}${ORANGE}%-34s${RESET}" "$email")
+        fi
+
+        local last_used
+        last_used=$(get_last_used "$email")
+
+        echo -e "  $email_display $status_badge"
+        echo -e "  ${GRAY}🕒 Last Used:${RESET} ${PINK}$last_used${RESET}"
+
+        local res
+        res=$(fetch_account_models "$f")
+        local has_models
+        has_models=$(echo "$res" | jq -r '.models != null' 2>/dev/null)
+
+        if [ "$has_models" != "true" ]; then
+            echo -e "  ${RED}⚠️  Failed to fetch quota info (Token invalid or network error)${RESET}\n"
+            continue
+        fi
+
+        echo -e "  ${BOLD}Model Quotas:${RESET}"
+
+        for i in "${!primary_mids[@]}"; do
+            local m_id="${primary_mids[$i]}"
+            local label="${primary_labels[$i]}"
+
+            local has_q
+            has_q=$(echo "$res" | jq -r ".models[\"$m_id\"].quotaInfo != null" 2>/dev/null)
+            if [ "$has_q" = "true" ]; then
+                local frac
+                frac=$(echo "$res" | jq -r ".models[\"$m_id\"].quotaInfo.remainingFraction // 0" 2>/dev/null)
+                local reset_t
+                reset_t=$(echo "$res" | jq -r ".models[\"$m_id\"].quotaInfo.resetTime // empty" 2>/dev/null)
+
+                local pbar
+                pbar=$(make_progress_bar "$frac")
+                local reset_disp
+                reset_disp=$(format_reset_time "$reset_t")
+
+                local padded_label
+                padded_label=$(printf "%-22s" "$label")
+                echo -e "    │ ${CYAN}${padded_label}${RESET} ${pbar}  (${reset_disp})"
+            else
+                local pbar
+                pbar=$(make_progress_bar "")
+                local padded_label
+                padded_label=$(printf "%-22s" "$label")
+                echo -e "    │ ${GRAY}${padded_label}${RESET} ${pbar}"
+            fi
+        done
+
+        if [ "$verbose" = "true" ]; then
+            echo -e "\n  ${BOLD}${GRAY}Other Models:${RESET}"
+            local other_ids
+            other_ids=$(echo "$res" | jq -r '.models | keys[]' 2>/dev/null | sort)
+            for m_id in $other_ids; do
+                local skip=false
+                for pm in "${primary_mids[@]}"; do
+                    [ "$m_id" = "$pm" ] && { skip=true; break; }
+                done
+                [ "$skip" = true ] && continue
+
+                local frac
+                frac=$(echo "$res" | jq -r ".models[\"$m_id\"].quotaInfo.remainingFraction // 0" 2>/dev/null)
+                local reset_t
+                reset_t=$(echo "$res" | jq -r ".models[\"$m_id\"].quotaInfo.resetTime // empty" 2>/dev/null)
+                local pbar
+                pbar=$(make_progress_bar "$frac")
+                local reset_disp
+                reset_disp=$(format_reset_time "$reset_t")
+                local padded_id
+                padded_id=$(printf "%-22s" "$m_id")
+                echo -e "    │ ${GRAY}${padded_id}${RESET} ${pbar}  (${reset_disp})"
+            done
+        fi
+
+        echo
+    done
+}
+
+interactive_switch() {
+    save_current_account >/dev/null
+    local saved
+    saved=$(get_saved_accounts)
+    local current_token
+    current_token=$(get_current_keyring_token)
+    local current_email=""
+    [ -n "$current_token" ] && current_email=$(extract_email_from_token_json "$current_token")
+
+    if [ -z "$saved" ]; then
+        echo "No saved accounts found."
+        exit 1
+    fi
+
+    local lines=""
+    for email in $saved; do
+        local status=""
+        [ "$email" = "$current_email" ] && status="(active)"
+        lines="${lines}${email} ${status}\n"
+    done
+
+    local fzf_colors="bg+:#282a36,bg:#1e1e2e,spinner:#ff79c6,hl:#bd93f9,fg:#f8f8f2,header:#8be9fd,info:#ffb86c,pointer:#ff79c6,marker:#ff79c6,fg+:#f8f8f2,prompt:#50fa7b"
+
+    if command -v fzf >/dev/null 2>&1; then
+        local selected
+        selected=$(echo -e "$lines" | fzf \
+            --height 40% \
+            --layout=reverse \
+            --border=rounded \
+            --prompt="👤 Select AGY Account > " \
+            --header="[ ENTER: Switch Account | ESC: Cancel ]" \
+            --color="$fzf_colors" | awk '{print $1}')
+        if [ -n "$selected" ]; then
+            set_active_account "$selected"
+        fi
+    else
+        list_accounts
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# CLI Dispatcher
+# -----------------------------------------------------------------------------
+main() {
+    if [ $# -lt 1 ]; then
+        pick_session
+        return
+    fi
+
+    local cmd
+    cmd=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+
+    case "$cmd" in
+        sessions|session|s|ls)
+            pick_session
+            ;;
+        accounts|account|acc|sw|switch|use|a)
+            if [ -n "$2" ]; then
+                set_active_account "$2"
+            else
+                interactive_switch
+            fi
+            ;;
+        stats|status|quota|info|q)
+            local verbose=false
+            for arg in "$@"; do
+                if [ "$arg" = "-v" ] || [ "$arg" = "--verbose" ]; then
+                    verbose=true
+                    break
+                fi
+            done
+            show_stats "$verbose"
+            ;;
+        list)
+            list_accounts
+            ;;
+        save)
+            local saved
+            saved=$(save_current_account)
+            if [ -n "$saved" ]; then
+                echo "Saved account: $saved"
+            else
+                echo "No active account token found to save."
+            fi
+            ;;
+        help|-h|--help)
+            echo -e "${BOLD}${PURPLE}agym${RESET} - Unified Antigravity CLI Manager"
+            echo -e "\n${BOLD}Usage:${RESET}"
+            echo "  agym [command] [options]"
+            echo -e "\n${BOLD}Commands:${RESET}"
+            echo "  (no args), sessions, s    Interactive fzf session picker"
+            echo "  accounts, acc, a          Interactive fzf account switcher"
+            echo "  switch <email>            Switch active account by email/query"
+            echo "  stats, status, q          Show account quota & model reset times"
+            echo "    --verbose, -v           Show all model quotas"
+            echo "  list                      List all saved accounts"
+            echo "  save                      Save active token from keyring"
+            ;;
+        *)
+            set_active_account "$1"
+            ;;
+    esac
+}
+
+main "$@"
