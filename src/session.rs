@@ -244,16 +244,16 @@ pub fn pick_session() {
         );
 
         let sep = "─".repeat(cols_usize.min(120));
-        println!("\x1b[38;2;189;147;249m{}\x1b[0m", sep);
-        println!(
-            "\x1b[1m\x1b[38;2;139;233;253m🔍 Search AGY Session > \x1b[38;2;80;250;123m{}\x1b[0m",
+        print!("\x1b[38;2;189;147;249m{}\x1b[0m\r\n", sep);
+        print!(
+            "\x1b[1m\x1b[38;2;139;233;253m🔍 Search AGY Session > \x1b[38;2;80;250;123m{}\x1b[0m\r\n",
             search_query
         );
-        println!("\x1b[38;2;98;114;164m[ ↑↓: Move | Space/v: Details | Enter: Resume | Esc: Exit ]\x1b[0m");
-        println!("\x1b[38;2;189;147;249m{}\x1b[0m\n", sep);
+        print!("\x1b[38;2;98;114;164m[ ↑↓: Move | Space/v: Details | Enter: Resume | Esc: Exit ]\x1b[0m\r\n");
+        print!("\x1b[38;2;189;147;249m{}\x1b[0m\r\n\r\n", sep);
 
         if filtered.is_empty() {
-            println!("  \x1b[38;2;255;85;85mNo matching sessions found.\x1b[0m");
+            print!("  \x1b[38;2;255;85;85mNo matching sessions found.\x1b[0m\r\n");
         } else {
             let max_visible = (term_rows as usize).saturating_sub(7).max(5);
             let start_idx = if selected_idx >= max_visible {
@@ -283,13 +283,13 @@ pub fn pick_session() {
                 let padded_size = format!("{:>8}", s.size_fmt);
 
                 if is_selected {
-                    println!(
-                        " \x1b[38;2;80;250;123m▶\x1b[0m \x1b[1m\x1b[38;2;139;233;253m{}\x1b[0m │ \x1b[38;2;255;121;198m{}\x1b[0m │ \x1b[38;2;241;250;140m{}\x1b[0m │ \x1b[1m\x1b[38;2;248;248;242m{}\x1b[0m",
+                    print!(
+                        " \x1b[38;2;80;250;123m▶\x1b[0m \x1b[1m\x1b[38;2;139;233;253m{}\x1b[0m │ \x1b[38;2;255;121;198m{}\x1b[0m │ \x1b[38;2;241;250;140m{}\x1b[0m │ \x1b[1m\x1b[38;2;248;248;242m{}\x1b[0m\r\n",
                         s.datetime, s.short_cid, padded_size, trunc_summary
                     );
                 } else {
-                    println!(
-                        "   \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m",
+                    print!(
+                        "   \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m\r\n",
                         s.datetime, s.short_cid, padded_size, trunc_summary
                     );
                 }
@@ -297,15 +297,15 @@ pub fn pick_session() {
                 if is_expanded {
                     let box_w = cols_usize.saturating_sub(6).min(100);
                     let top_bar = format!("┌─ 🔍 FULL SESSION DETAILS ({}) {}", s.size_fmt, "─".repeat(box_w.saturating_sub(35)));
-                    println!("    \x1b[38;2;255;184;108m{}\x1b[0m", top_bar);
-                    println!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mFull CID:\x1b[0m \x1b[38;2;255;121;198m{}\x1b[0m", s.cid);
-                    println!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mDate:\x1b[0m {}  (\x1b[38;2;241;250;140m{} bytes\x1b[0m, {} lines)", s.datetime, s.size_bytes, s.line_count);
-                    println!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mPrompt:\x1b[0m");
+                    print!("    \x1b[38;2;255;184;108m{}\x1b[0m\r\n", top_bar);
+                    print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mFull CID:\x1b[0m \x1b[38;2;255;121;198m{}\x1b[0m\r\n", s.cid);
+                    print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mDate:\x1b[0m {}  (\x1b[38;2;241;250;140m{} bytes\x1b[0m, {} lines)\r\n", s.datetime, s.size_bytes, s.line_count);
+                    print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mPrompt:\x1b[0m\r\n");
                     for p_line in s.full_prompt.lines().take(6) {
-                        println!("    \x1b[38;2;255;184;108m│\x1b[0m   {}", p_line);
+                        print!("    \x1b[38;2;255;184;108m│\x1b[0m   {}\r\n", p_line);
                     }
                     let bot_bar = "└".to_string() + &"─".repeat(box_w.saturating_sub(1));
-                    println!("    \x1b[38;2;255;184;108m{}\x1b[0m", bot_bar);
+                    print!("    \x1b[38;2;255;184;108m{}\x1b[0m\r\n", bot_bar);
                 }
             }
         }
