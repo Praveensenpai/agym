@@ -14,15 +14,13 @@ echo -e "${PURPLE}🚀 Installing agym (Unified Antigravity CLI Manager)...${NC}
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-AGYM_SRC="$SCRIPT_DIR/bin/agym"
 RAW_URL="https://raw.githubusercontent.com/Praveensenpai/agym/main/bin/agym"
 
-if [ -f "$AGYM_SRC" ]; then
-    cp "$AGYM_SRC" "$BIN_DIR/agym"
+if [ -n "${BASH_SOURCE[0]}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/bin/agym" ]; then
+    cp "$(dirname "${BASH_SOURCE[0]}")/bin/agym" "$BIN_DIR/agym"
 else
     echo -e "${BLUE}📦 Downloading agym binary from GitHub...${NC}"
-    curl -sSL "$RAW_URL" -o "$BIN_DIR/agym"
+    curl -sSL -H 'Cache-Control: no-cache' "$RAW_URL" -o "$BIN_DIR/agym"
 fi
 
 if [ ! -f "$BIN_DIR/agym" ] || [ ! -s "$BIN_DIR/agym" ]; then
