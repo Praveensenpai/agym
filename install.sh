@@ -23,11 +23,15 @@ if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
 fi
 
 if [ -n "$LOCAL_DIR" ] && [ -f "$LOCAL_DIR/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
-    echo -e "${BLUE}📦 Local source detected. Building release binary with Cargo...${NC}"
+    VERSION=$(grep -m1 '^version' "$LOCAL_DIR/Cargo.toml" | cut -d '"' -f2 2>/dev/null || echo "latest")
+    echo -e "${BLUE}📦 Local source detected. Building agym v${VERSION} with Cargo...${NC}"
     cargo build --release --manifest-path "$LOCAL_DIR/Cargo.toml"
     cp "$LOCAL_DIR/target/release/agym" "$BIN_DIR/agym"
+    INSTALLED_VER="v${VERSION}"
 else
-    echo -e "${BLUE}📦 Downloading latest pre-compiled Linux binary from GitHub Releases...${NC}"
+    LATEST_TAG=$(curl -4 -sIL -o /dev/null -w "%{url_effective}" "https://github.com/${REPO}/releases/latest" 2>/dev/null | sed 's#.*/tag/##')
+    [ -z "$LATEST_TAG" ] && LATEST_TAG="latest"
+    echo -e "${BLUE}📦 Downloading agym ${LATEST_TAG} pre-compiled binary from GitHub Releases...${NC}"
     TMP_DIR=$(mktemp -d)
     if curl -4 -fL --connect-timeout 10 --retry 3 -sS "$RELEASE_URL" -o "$TMP_DIR/agym.tar.gz"; then
         tar -xzf "$TMP_DIR/agym.tar.gz" -C "$TMP_DIR"
@@ -37,9 +41,10 @@ else
             cp "$TMP_DIR/dist/agym" "$BIN_DIR/agym"
         fi
         rm -rf "$TMP_DIR"
+        INSTALLED_VER="${LATEST_TAG}"
     else
         rm -rf "$TMP_DIR"
-        echo -e "${RED}❌ Failed to download pre-compiled release. (Ensure a release tag like v0.1.0 exists on GitHub)${NC}"
+        echo -e "${RED}❌ Failed to download pre-compiled release.${NC}"
         exit 1
     fi
 fi
@@ -50,7 +55,7 @@ if [ ! -f "$BIN_DIR/agym" ] || [ ! -s "$BIN_DIR/agym" ]; then
 fi
 
 chmod +x "$BIN_DIR/agym"
-echo -e "${GREEN}✔ Installed agym to ${BIN_DIR}/agym${NC}"
+echo -e "${GREEN}✔ Installed agym ${INSTALLED_VER} to ${BIN_DIR}/agym${NC}"
 
 # Shell alias setup
 SHELL_CONFIGS=("$HOME/.bashrc" "$HOME/.zshrc")
@@ -68,8 +73,9 @@ for config in "${SHELL_CONFIGS[@]}"; do
     fi
 done
 
-echo -e "\n${GREEN}${BOLD}🎉 agym installation completed!${NC}"
+echo -e "\n${GREEN}${BOLD}🎉 agym ${INSTALLED_VER} installation completed!${NC}"
 echo -e "Usage:"
 echo -e "  ${CYAN}agym${NC}            - Interactive session picker"
 echo -e "  ${CYAN}agym accounts${NC}   - Interactive account switcher"
 echo -e "  ${CYAN}agym stats${NC}      - Quota & model status"
+echo -e "  ${CYAN}agym --version${NC}  - Show agym version"
