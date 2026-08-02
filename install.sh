@@ -29,7 +29,7 @@ if [ -n "$LOCAL_DIR" ] && [ -f "$LOCAL_DIR/Cargo.toml" ] && command -v cargo >/d
 else
     echo -e "${BLUE}📦 Downloading latest pre-compiled Linux binary from GitHub Releases...${NC}"
     TMP_DIR=$(mktemp -d)
-    if curl -4 -fL --connect-timeout 10 --retry 3 --progress-bar "$RELEASE_URL" -o "$TMP_DIR/agym.tar.gz"; then
+    if curl -4 -fL --connect-timeout 10 --retry 3 -sS "$RELEASE_URL" -o "$TMP_DIR/agym.tar.gz"; then
         tar -xzf "$TMP_DIR/agym.tar.gz" -C "$TMP_DIR"
         if [ -f "$TMP_DIR/agym" ]; then
             cp "$TMP_DIR/agym" "$BIN_DIR/agym"
