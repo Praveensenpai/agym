@@ -25,6 +25,7 @@ pub struct SessionInfo {
     pub line_count: usize,
     pub summary: String,
     pub full_prompt: String,
+    pub profile: Option<String>,
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -95,7 +96,7 @@ pub fn pick_session() {
     let home_path = PathBuf::from(&home);
 
     let search_roots = vec![
-        home_path.join(".gemini/antigravity-cli/brain"),
+        home_path.join(".gemini"),
         home_path.join(".gemini-profiles"),
     ];
 
@@ -106,7 +107,7 @@ pub fn pick_session() {
             continue;
         }
 
-        for entry in WalkDir::new(&root).max_depth(6).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(&root).max_depth(12).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.file_name() == Some(std::ffi::OsStr::new("transcript.jsonl")) {
                 if let Some(logs_dir) = path.parent() {
@@ -157,7 +158,18 @@ pub fn pick_session() {
                                     }
 
                                     if summary.is_empty() {
-                                        continue;
+                                        summary = "(No user prompt recorded)".to_string();
+                                        full_prompt = "(No user prompt recorded)".to_string();
+                                    }
+
+                                    let mut profile: Option<String> = None;
+                                    if let Ok(rel) = path.strip_prefix(&home_path.join(".gemini-profiles")) {
+                                        if let Some(first_comp) = rel.components().next() {
+                                            let p_name = first_comp.as_os_str().to_string_lossy().to_string();
+                                            if !p_name.is_empty() {
+                                                profile = Some(p_name);
+                                            }
+                                        }
                                     }
 
                                     let short_cid = if cid.len() >= 8 {
@@ -180,6 +192,7 @@ pub fn pick_session() {
                                         line_count,
                                         summary,
                                         full_prompt,
+                                        profile,
                                     };
 
                                     sessions_map
@@ -215,7 +228,7 @@ pub fn pick_session() {
     let mut out = stdout();
     let _ = execute!(out, EnterAlternateScreen, cursor::Hide);
 
-    let result_cid = loop {
+    let result_session_opt = loop {
         let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((100, 30));
         let cols_usize = term_cols as usize;
 
@@ -229,6 +242,7 @@ pub fn pick_session() {
                     s.summary.to_lowercase().contains(&q)
                         || s.cid.to_lowercase().contains(&q)
                         || s.datetime.contains(&q)
+                        || s.profile.as_ref().map_or(false, |p| p.to_lowercase().contains(&q))
                 }
             })
             .collect();
@@ -243,11 +257,12 @@ pub fn pick_session() {
             crossterm::cursor::MoveTo(0, 0)
         );
 
+        let count_str = format!("({}/{} sessions)", filtered.len(), sessions.len());
         let sep = "─".repeat(cols_usize.min(120));
         print!("\x1b[38;2;189;147;249m{}\x1b[0m\r\n", sep);
         print!(
-            "\x1b[1m\x1b[38;2;139;233;253m🔍 Search AGY Session > \x1b[38;2;80;250;123m{}\x1b[0m\r\n",
-            search_query
+            "\x1b[1m\x1b[38;2;139;233;253m🔍 Search AGY Session \x1b[38;2;98;114;164m{}\x1b[38;2;139;233;253m > \x1b[38;2;80;250;123m{}\x1b[0m\r\n",
+            count_str, search_query
         );
         print!("\x1b[38;2;98;114;164m[ ↑↓: Move | Space/v: Details | Enter: Resume | Esc: Exit ]\x1b[0m\r\n");
         print!("\x1b[38;2;189;147;249m{}\x1b[0m\r\n\r\n", sep);
@@ -264,8 +279,6 @@ pub fn pick_session() {
             let end_idx = (start_idx + max_visible).min(filtered.len());
 
             // Compute available prompt width dynamically
-            // Line format: " ▸ YYYY-MM-DD HH:MM │ short_cid │   size   │ summary"
-            // Prefix width ~ 43 characters
             let avail_prompt_width = cols_usize.saturating_sub(46).max(15);
 
             for idx in start_idx..end_idx {
@@ -299,6 +312,9 @@ pub fn pick_session() {
                     let top_bar = format!("┌─ 🔍 FULL SESSION DETAILS ({}) {}", s.size_fmt, "─".repeat(box_w.saturating_sub(35)));
                     print!("    \x1b[38;2;255;184;108m{}\x1b[0m\r\n", top_bar);
                     print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mFull CID:\x1b[0m \x1b[38;2;255;121;198m{}\x1b[0m\r\n", s.cid);
+                    if let Some(ref prof) = s.profile {
+                        print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mAccount Profile:\x1b[0m \x1b[38;2;80;250;123m{}\x1b[0m\r\n", prof);
+                    }
                     print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mDate:\x1b[0m {}  (\x1b[38;2;241;250;140m{} bytes\x1b[0m, {} lines)\r\n", s.datetime, s.size_bytes, s.line_count);
                     print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mPrompt:\x1b[0m\r\n");
                     for p_line in s.full_prompt.lines().take(6) {
@@ -319,7 +335,7 @@ pub fn pick_session() {
                 KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => break None,
                 KeyCode::Enter => {
                     if !filtered.is_empty() {
-                        break Some(filtered[selected_idx].cid.clone());
+                        break Some(filtered[selected_idx].clone());
                     }
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -358,9 +374,12 @@ pub fn pick_session() {
     let _ = execute!(out, cursor::Show, LeaveAlternateScreen);
     let _ = disable_raw_mode();
 
-    if let Some(cid) = result_cid {
-        println!("▶ Resuming session: \x1b[38;2;139;233;253m{}\x1b[0m", cid);
-        let _ = Command::new("agy").args(["--conversation", &cid]).exec();
+    if let Some(selected_session) = result_session_opt {
+        if let Some(ref prof) = selected_session.profile {
+            crate::account::set_active_account(prof);
+        }
+        println!("▶ Resuming session: \x1b[38;2;139;233;253m{}\x1b[0m", selected_session.cid);
+        let _ = Command::new("agy").args(["--conversation", &selected_session.cid]).exec();
     } else {
         println!("Cancelled.");
     }
