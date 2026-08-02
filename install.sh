@@ -29,7 +29,7 @@ if [ -n "$LOCAL_DIR" ] && [ -f "$LOCAL_DIR/Cargo.toml" ] && command -v cargo >/d
     cp "$LOCAL_DIR/target/release/agym" "$BIN_DIR/agym"
     INSTALLED_VER="v${VERSION}"
 else
-    LATEST_TAG=$(curl -4 -sIL -o /dev/null -w "%{url_effective}" "https://github.com/${REPO}/releases/latest" 2>/dev/null | sed 's#.*/tag/##')
+    LATEST_TAG=$(curl -4 -sSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep -o '"tag_name": "[^"]*"' | cut -d'"' -f4)
     [ -z "$LATEST_TAG" ] && LATEST_TAG="latest"
     echo -e "${BLUE}📦 Downloading agym ${LATEST_TAG} pre-compiled binary from GitHub Releases...${NC}"
     TMP_DIR=$(mktemp -d)
