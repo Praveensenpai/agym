@@ -1,9 +1,10 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use colored::*;
+use inquire::Select;
 use rusqlite::Connection;
 use std::fs::{self, File};
-use std::io::{Write};
+use std::io::Write;
 use std::os::unix::fs as unix_fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -220,6 +221,22 @@ pub fn list_accounts() {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AccountItem {
+    pub email: String,
+    pub is_active: bool,
+}
+
+impl std::fmt::Display for AccountItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_active {
+            write!(f, "{} {}", self.email.cyan().bold(), "(active)".green())
+        } else {
+            write!(f, "{}", self.email.truecolor(255, 184, 108))
+        }
+    }
+}
+
 pub fn interactive_switch() {
     let _ = save_current_account();
     let saved = get_saved_accounts();
@@ -227,47 +244,28 @@ pub fn interactive_switch() {
     let current_email = current_token.as_deref().and_then(extract_email_from_token_json);
 
     if saved.is_empty() {
-        println!("No saved accounts found.");
+        println!("{}", "No saved accounts found.".yellow());
         std::process::exit(1);
     }
 
-    let mut formatted_input = String::new();
-    for email in &saved {
-        let status = if Some(email) == current_email.as_ref() { "(active)" } else { "" };
-        formatted_input.push_str(&format!("{} {}\n", email, status));
-    }
+    let items: Vec<AccountItem> = saved
+        .into_iter()
+        .map(|email| {
+            let is_active = Some(&email) == current_email.as_ref();
+            AccountItem { email, is_active }
+        })
+        .collect();
 
-    let fzf_colors = "bg+:#282a36,bg:#1e1e2e,spinner:#ff79c6,hl:#bd93f9,fg:#f8f8f2,header:#8be9fd,info:#ffb86c,pointer:#ff79c6,marker:#ff79c6,fg+:#f8f8f2,prompt:#50fa7b";
+    let ans = Select::new("👤 Select AGY Account >", items)
+        .with_help_message("Type to filter | ↑↓ to navigate | Enter to switch | Esc to cancel")
+        .prompt();
 
-    let child = Command::new("fzf")
-        .args([
-            "--height=40%",
-            "--layout=reverse",
-            "--border=rounded",
-            "--prompt=👤 Select AGY Account > ",
-            "--header=[ ENTER: Switch Account | ESC: Cancel ]",
-            &format!("--color={}", fzf_colors),
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn();
-
-    if let Ok(mut proc) = child {
-        if let Some(mut stdin) = proc.stdin.take() {
-            let _ = stdin.write_all(formatted_input.as_bytes());
+    match ans {
+        Ok(selected) => {
+            set_active_account(&selected.email);
         }
-        let output = proc.wait_with_output();
-        if let Ok(out) = output {
-            if out.status.success() {
-                let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let email = line.split_whitespace().next().unwrap_or("");
-                if !email.is_empty() {
-                    set_active_account(email);
-                    return;
-                }
-            }
+        Err(_) => {
+            println!("{}", "Cancelled.".yellow());
         }
     }
-
-    list_accounts();
 }
