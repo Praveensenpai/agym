@@ -107,7 +107,7 @@ pub fn pick_session() {
             continue;
         }
 
-        for entry in WalkDir::new(&root).max_depth(12).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(&root).max_depth(20).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.file_name() == Some(std::ffi::OsStr::new("transcript.jsonl")) {
                 if let Some(logs_dir) = path.parent() {
