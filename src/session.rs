@@ -17,16 +17,35 @@ use walkdir::WalkDir;
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub cid: String,
+    pub short_cid: String,
     pub mtime: u64,
     pub datetime: String,
+    pub size_bytes: u64,
+    pub size_fmt: String,
+    pub line_count: usize,
     pub summary: String,
     pub full_prompt: String,
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
 }
 
 pub fn extract_clean_prompt(content: &str) -> (String, String) {
     let mut raw_text = content.to_string();
 
-    // 1. Extract <USER_REQUEST>...</USER_REQUEST> if present
     if let Some(start) = raw_text.find("<USER_REQUEST>") {
         if let Some(end) = raw_text.find("</USER_REQUEST>") {
             if end > start + 14 {
@@ -35,7 +54,6 @@ pub fn extract_clean_prompt(content: &str) -> (String, String) {
         }
     }
 
-    // 2. Remove <ADDITIONAL_METADATA>...</ADDITIONAL_METADATA>
     if let Some(start) = raw_text.find("<ADDITIONAL_METADATA>") {
         if let Some(end) = raw_text.find("</ADDITIONAL_METADATA>") {
             if end > start {
@@ -48,11 +66,9 @@ pub fn extract_clean_prompt(content: &str) -> (String, String) {
         }
     }
 
-    // 3. Strip HTML/XML tags
     let html_re = Regex::new(r"<[^>]+>").unwrap();
     let no_tags = html_re.replace_all(&raw_text, "").to_string();
 
-    // 4. Filter metadata lines
     let lines: Vec<&str> = no_tags
         .lines()
         .filter(|l| {
@@ -71,14 +87,7 @@ pub fn extract_clean_prompt(content: &str) -> (String, String) {
     let full = lines.join("\n");
     let single_line = lines.join(" ").split_whitespace().collect::<Vec<_>>().join(" ");
 
-    let summary = if single_line.chars().count() > 70 {
-        let truncated: String = single_line.chars().take(70).collect();
-        format!("{}...", truncated)
-    } else {
-        single_line
-    };
-
-    (summary, full)
+    (single_line.clone(), full)
 }
 
 pub fn pick_session() {
@@ -115,6 +124,9 @@ pub fn pick_session() {
                                         Err(_) => continue,
                                     };
 
+                                    let size_bytes = metadata.len();
+                                    let size_fmt = format_bytes(size_bytes);
+
                                     let mtime = metadata
                                         .modified()
                                         .ok()
@@ -124,18 +136,19 @@ pub fn pick_session() {
 
                                     let mut summary = String::new();
                                     let mut full_prompt = String::new();
+                                    let mut line_count = 0;
 
                                     if let Ok(file) = File::open(path) {
                                         let reader = BufReader::new(file);
                                         for line in reader.lines().filter_map(|l| l.ok()) {
-                                            if line.contains(r#""type":"USER_INPUT""#) {
+                                            line_count += 1;
+                                            if summary.is_empty() && line.contains(r#""type":"USER_INPUT""#) {
                                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
                                                     if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
                                                         let (sum, fp) = extract_clean_prompt(content);
                                                         if !sum.trim().is_empty() {
                                                             summary = sum;
                                                             full_prompt = fp;
-                                                            break;
                                                         }
                                                     }
                                                 }
@@ -147,14 +160,24 @@ pub fn pick_session() {
                                         continue;
                                     }
 
+                                    let short_cid = if cid.len() >= 8 {
+                                        cid[..8].to_string()
+                                    } else {
+                                        cid.clone()
+                                    };
+
                                     let dt = DateTime::from_timestamp(mtime as i64, 0)
                                         .map(|t| t.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string())
                                         .unwrap_or_else(|| "Unknown".to_string());
 
                                     let info = SessionInfo {
                                         cid: cid.clone(),
+                                        short_cid,
                                         mtime,
                                         datetime: dt,
+                                        size_bytes,
+                                        size_fmt,
+                                        line_count,
                                         summary,
                                         full_prompt,
                                     };
@@ -193,6 +216,9 @@ pub fn pick_session() {
     let _ = execute!(out, EnterAlternateScreen, cursor::Hide);
 
     let result_cid = loop {
+        let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((100, 30));
+        let cols_usize = term_cols as usize;
+
         let filtered: Vec<&SessionInfo> = sessions
             .iter()
             .filter(|s| {
@@ -211,25 +237,25 @@ pub fn pick_session() {
             selected_idx = filtered.len() - 1;
         }
 
-        // Render UI
         let _ = execute!(
             out,
             crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
             crossterm::cursor::MoveTo(0, 0)
         );
 
-        println!("\x1b[1m\x1b[38;2;189;147;249m========================================================================\x1b[0m");
+        let sep = "─".repeat(cols_usize.min(120));
+        println!("\x1b[38;2;189;147;249m{}\x1b[0m", sep);
         println!(
             "\x1b[1m\x1b[38;2;139;233;253m🔍 Search AGY Session > \x1b[38;2;80;250;123m{}\x1b[0m",
             search_query
         );
-        println!("\x1b[38;2;98;114;164m[ ↑↓: Move | Space/v: Expand Details | Enter: Resume | Esc: Exit ]\x1b[0m");
-        println!("\x1b[1m\x1b[38;2;189;147;249m========================================================================\x1b[0m\n");
+        println!("\x1b[38;2;98;114;164m[ ↑↓: Move | Space/v: Details | Enter: Resume | Esc: Exit ]\x1b[0m");
+        println!("\x1b[38;2;189;147;249m{}\x1b[0m\n", sep);
 
         if filtered.is_empty() {
             println!("  \x1b[38;2;255;85;85mNo matching sessions found.\x1b[0m");
         } else {
-            let max_visible = 12;
+            let max_visible = (term_rows as usize).saturating_sub(7).max(5);
             let start_idx = if selected_idx >= max_visible {
                 selected_idx - max_visible + 1
             } else {
@@ -237,31 +263,49 @@ pub fn pick_session() {
             };
             let end_idx = (start_idx + max_visible).min(filtered.len());
 
+            // Compute available prompt width dynamically
+            // Line format: " ▸ YYYY-MM-DD HH:MM │ short_cid │   size   │ summary"
+            // Prefix width ~ 43 characters
+            let avail_prompt_width = cols_usize.saturating_sub(46).max(15);
+
             for idx in start_idx..end_idx {
                 let s = filtered[idx];
                 let is_selected = idx == selected_idx;
                 let is_expanded = expanded_cid.as_ref() == Some(&s.cid);
 
+                let trunc_summary = if s.summary.chars().count() > avail_prompt_width {
+                    let text: String = s.summary.chars().take(avail_prompt_width.saturating_sub(3)).collect();
+                    format!("{}...", text)
+                } else {
+                    s.summary.clone()
+                };
+
+                let padded_size = format!("{:>8}", s.size_fmt);
+
                 if is_selected {
                     println!(
-                        " \x1b[38;2;80;250;123m▶\x1b[0m \x1b[1m\x1b[38;2;139;233;253m{}\x1b[0m │ \x1b[38;2;255;121;198m{}\x1b[0m │ \x1b[1m\x1b[38;2;248;248;242m{}\x1b[0m",
-                        s.datetime, s.cid, s.summary
+                        " \x1b[38;2;80;250;123m▶\x1b[0m \x1b[1m\x1b[38;2;139;233;253m{}\x1b[0m │ \x1b[38;2;255;121;198m{}\x1b[0m │ \x1b[38;2;241;250;140m{}\x1b[0m │ \x1b[1m\x1b[38;2;248;248;242m{}\x1b[0m",
+                        s.datetime, s.short_cid, padded_size, trunc_summary
                     );
                 } else {
                     println!(
-                        "   \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m",
-                        s.datetime, s.cid, s.summary
+                        "   \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m",
+                        s.datetime, s.short_cid, padded_size, trunc_summary
                     );
                 }
 
                 if is_expanded {
-                    println!("    \x1b[38;2;255;184;108m┌─ 🔍 FULL PROMPT DETAILS ──────────────────────────────────────────┐\x1b[0m");
-                    println!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mCID:\x1b[0m \x1b[38;2;255;121;198m{}\x1b[0m", s.cid);
-                    println!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mDate:\x1b[0m {}", s.datetime);
-                    for p_line in s.full_prompt.lines() {
-                        println!("    \x1b[38;2;255;184;108m│\x1b[0m {}", p_line);
+                    let box_w = cols_usize.saturating_sub(6).min(100);
+                    let top_bar = format!("┌─ 🔍 FULL SESSION DETAILS ({}) {}", s.size_fmt, "─".repeat(box_w.saturating_sub(35)));
+                    println!("    \x1b[38;2;255;184;108m{}\x1b[0m", top_bar);
+                    println!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mFull CID:\x1b[0m \x1b[38;2;255;121;198m{}\x1b[0m", s.cid);
+                    println!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mDate:\x1b[0m {}  (\x1b[38;2;241;250;140m{} bytes\x1b[0m, {} lines)", s.datetime, s.size_bytes, s.line_count);
+                    println!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mPrompt:\x1b[0m");
+                    for p_line in s.full_prompt.lines().take(6) {
+                        println!("    \x1b[38;2;255;184;108m│\x1b[0m   {}", p_line);
                     }
-                    println!("    \x1b[38;2;255;184;108m└──────────────────────────────────────────────────────────────────┘\x1b[0m");
+                    let bot_bar = "└".to_string() + &"─".repeat(box_w.saturating_sub(1));
+                    println!("    \x1b[38;2;255;184;108m{}\x1b[0m", bot_bar);
                 }
             }
         }
