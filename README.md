@@ -14,11 +14,7 @@ Unified session picker, account switcher, and model quota manager for the **Anti
 
 ## 📦 Installation
 
-### Arch Linux / Omarchy (`yay` / AUR)
-
-```bash
-yay -S agym-git
-```
+> ℹ️ **Note**: AUR submission (`yay -S agym-git`) is currently pending due to temporary AUR maintenance. Please use the one-liner installer below in the meantime.
 
 ### Manual / One-Liner
 
