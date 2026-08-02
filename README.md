@@ -16,10 +16,21 @@ Unified session picker, account switcher, and model quota manager for the **Anti
 
 > ℹ️ **Note**: AUR submission (`yay -S agym-git`) is currently pending due to temporary AUR maintenance. Please use the one-liner installer below in the meantime.
 
-### Manual / One-Liner
+### Quick One-Liner
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/Praveensenpai/agym/main/install.sh | bash
+```
+
+### 🛠️ Build from Source (Cargo)
+
+Prerequisites: [Rust & Cargo](https://rustup.rs/)
+
+```bash
+git clone https://github.com/Praveensenpai/agym.git
+cd agym
+cargo build --release
+cp target/release/agym ~/.local/bin/
 ```
 
 ---
