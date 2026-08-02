@@ -16,9 +16,14 @@ mkdir -p "$BIN_DIR"
 
 RAW_URL="https://raw.githubusercontent.com/Praveensenpai/agym/main/bin/agym"
 
-# Check if running from local repo clone containing PKGBUILD
-if [ -n "${BASH_SOURCE[0]}" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/PKGBUILD" ] && [ -f "$(dirname "${BASH_SOURCE[0]}")/bin/agym" ]; then
-    cp "$(dirname "${BASH_SOURCE[0]}")/bin/agym" "$BIN_DIR/agym"
+# Check if running directly from a local repository clone
+LOCAL_DIR=""
+if [ -n "${BASH_SOURCE[0]}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+fi
+
+if [ -n "$LOCAL_DIR" ] && [ -f "$LOCAL_DIR/PKGBUILD" ] && [ -f "$LOCAL_DIR/bin/agym" ]; then
+    cp "$LOCAL_DIR/bin/agym" "$BIN_DIR/agym"
 else
     echo -e "${BLUE}📦 Downloading agym binary from GitHub...${NC}"
     curl -sSL -H 'Cache-Control: no-cache' "$RAW_URL" -o "$BIN_DIR/agym"
