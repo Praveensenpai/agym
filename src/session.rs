@@ -270,18 +270,44 @@ pub fn pick_session() {
         if filtered.is_empty() {
             print!("  \x1b[38;2;255;85;85mNo matching sessions found.\x1b[0m\r\n");
         } else {
-            let max_visible = (term_rows as usize).saturating_sub(7).max(5);
-            let start_idx = if selected_idx >= max_visible {
-                selected_idx - max_visible + 1
-            } else {
-                0
+            // Calculate available line budget for session list items
+            // Header takes ~6 lines (sep, search line, help line, sep, blank line)
+            let avail_height = (term_rows as usize).saturating_sub(6).max(3);
+
+            let get_item_height = |idx: usize| -> usize {
+                let s = filtered[idx];
+                if expanded_cid.as_ref() == Some(&s.cid) {
+                    let p_lines = s.full_prompt.lines().take(6).count();
+                    let prof_line = if s.profile.is_some() { 1 } else { 0 };
+                    1 + 4 + prof_line + p_lines + 1
+                } else {
+                    1
+                }
             };
-            let end_idx = (start_idx + max_visible).min(filtered.len());
+
+            // Calculate start_idx backward from selected_idx so selected_idx fits in viewport
+            let mut start_idx = selected_idx;
+            let mut h_acc = get_item_height(selected_idx);
+            while start_idx > 0 {
+                let prev_h = get_item_height(start_idx - 1);
+                if h_acc + prev_h > avail_height {
+                    break;
+                }
+                start_idx -= 1;
+                h_acc += prev_h;
+            }
 
             // Compute available prompt width dynamically
             let avail_prompt_width = cols_usize.saturating_sub(46).max(15);
+            let mut rendered_height = 0;
 
-            for idx in start_idx..end_idx {
+            for idx in start_idx..filtered.len() {
+                let item_h = get_item_height(idx);
+                if rendered_height > 0 && rendered_height + item_h > avail_height {
+                    break;
+                }
+                rendered_height += item_h;
+
                 let s = filtered[idx];
                 let is_selected = idx == selected_idx;
                 let is_expanded = expanded_cid.as_ref() == Some(&s.cid);
