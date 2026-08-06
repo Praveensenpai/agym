@@ -2,20 +2,21 @@
 
 > Ultra-fast Antigravity CLI Account Manager & Switcher written in Rust.
 
-`agym` allows you to switch between multiple Antigravity accounts instantly without logging out.
+`agym` allows you to switch between multiple Antigravity accounts instantly without logging out and jump directly into previous chat sessions.
 
 ---
 
 ## ⚡ Features
 
 * 🚀 **Instant Account Switching**: Switch Antigravity accounts in <10ms without logging out.
+* 💬 **Session Explorer**: Browse and jump directly into previous Antigravity sessions via `agy resume`.
 * 🔑 **Automatic JWT Parsing**: Decodes account email dynamically from your Antigravity token.
 * 📊 **Live Model Quota Display**: Shows CloudCode model quota next to accounts.
 * ⚡ **Smart 5-Minute Quota Cache**: Caches usage metrics locally in `~/.gemini-accounts/.quota_cache.json` for instant UI execution.
 * 🔄 **Cache Bypass**: Supports `--no-cache` (`-n`) to force refreshing live quota on demand.
 * ➕ **Seamless New Session Flow**: Backs up your active session so you can log into a new account with zero setup.
-* 🎯 **Interactive TUI Selector**: Select saved accounts with arrow keys using `inquire`.
-* 🛠️ **CLI Subcommands**: Full CLI support for scripting (`agym switch`, `agym new`, `agym save`, `agym list`, `agym remove`).
+* 🎯 **Interactive TUI Selector**: Select saved accounts or jump into sessions using `inquire`.
+* 🛠️ **CLI Subcommands**: Full CLI support for scripting (`agym switch`, `agym sessions`, `agym new`, `agym save`, `agym list`, `agym remove`).
 * 🐚 **Shell Autocompletions**: Native autocompletion support for `bash`, `zsh`, and `fish`.
 * 📦 **Single Standalone Binary**: Zero runtime dependencies.
 
@@ -69,13 +70,20 @@ agym completions fish > ~/.config/fish/completions/agym.fish
 ## 🚀 Usage
 
 ### 1. Interactive Switcher (Default)
-Run `agym` with no arguments to open the interactive selection menu:
+Run `agym` with no arguments to open the interactive menu:
 
 ```bash
 agym
 ```
 
-### 2. Bypass Quota Cache
+### 2. Resume Previous Sessions
+Browse previous chat sessions and resume instantly:
+
+```bash
+agym sessions # (or agym s)
+```
+
+### 3. Bypass Quota Cache
 Force fetching fresh live quota directly from CloudCode API:
 
 ```bash
@@ -84,7 +92,7 @@ agym --no-cache
 agym list --no-cache
 ```
 
-### 3. Log in to a New Account
+### 4. Log in to a New Account
 Back up your current session and prepare a fresh session to log into a new account:
 
 ```bash
@@ -92,28 +100,28 @@ agym new # (or agym add)
 ```
 Then log in via `agy`, and run `agym save` (or `agym`) when finished to auto-detect and save your new account!
 
-### 4. Save Current Account Session
+### 5. Save Current Account Session
 Save your currently active Antigravity login session:
 
 ```bash
 agym save
 ```
 
-### 5. Switch Account
+### 6. Switch Account
 Switch to a saved account directly by name or email:
 
 ```bash
 agym switch user@gmail.com
 ```
 
-### 6. List Accounts
-List all saved account profiles:
+### 7. List Accounts
+List all saved account profiles with model quota and cache timestamps:
 
 ```bash
 agym list
 ```
 
-### 7. Remove Account
+### 8. Remove Account
 Delete a saved account profile:
 
 ```bash
