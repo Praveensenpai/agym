@@ -14,7 +14,7 @@ use std::io;
 #[derive(Parser)]
 #[command(name = "agym")]
 #[command(author = "Praveensenpai")]
-#[command(version = "0.6.7")]
+#[command(version = "0.6.8")]
 #[command(about = "Unified Antigravity CLI & Account Manager", long_about = None)]
 struct Cli {
     /// Account email or query to switch to directly
