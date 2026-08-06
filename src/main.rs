@@ -14,9 +14,14 @@ use std::io;
 #[derive(Parser)]
 #[command(name = "agym")]
 #[command(author = "Praveensenpai")]
-#[command(version = "0.6.9")]
+#[command(disable_version_flag = true)]
+#[command(version = "0.6.10")]
 #[command(about = "Unified Antigravity CLI & Account Manager", long_about = None)]
 struct Cli {
+    /// Show the application version
+    #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
+    version: bool,
+
     /// Account email or query to switch to directly
     account: Option<String>,
 
