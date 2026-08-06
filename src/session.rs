@@ -40,12 +40,14 @@ impl AgySession {
 }
 
 pub fn sanitize_prompt(raw: &str) -> String {
-    let cleaned = raw
+    let stripped = raw.replace("<USER_REQUEST>", "").replace("</USER_REQUEST>", "");
+    let cleaned = stripped
         .lines()
         .map(|l| l.trim())
         .filter(|l| {
             !l.is_empty()
                 && !l.starts_with("<ADDITIONAL_METADATA>")
+                && !l.starts_with("</ADDITIONAL_METADATA>")
                 && !l.starts_with("<USER_SETTINGS_CHANGE>")
                 && !l.starts_with("The current local time is:")
                 && !l.starts_with("The user changed setting")
@@ -77,6 +79,7 @@ pub fn get_search_dirs() -> Vec<PathBuf> {
                 let path = entry.path();
                 if path.is_dir() {
                     dirs.push(path.join("antigravity-cli/brain"));
+                    dirs.push(path.join("gemini/antigravity-cli/brain"));
                 }
             }
         }
@@ -127,20 +130,25 @@ pub fn scan_agy_sessions() -> Vec<AgySession> {
                     if cid.starts_with('.') || cid == "scratch" {
                         continue;
                     }
-                    let transcript_path = session_dir.join("logs/transcript.jsonl");
-                    let alt_transcript = session_dir.join("transcript.jsonl");
 
-                    let target = if transcript_path.exists() {
-                        Some(transcript_path)
-                    } else if alt_transcript.exists() {
-                        Some(alt_transcript)
-                    } else {
-                        None
-                    };
+                    let possible_paths = [
+                        session_dir.join(".system_generated/logs/transcript.jsonl"),
+                        session_dir.join("logs/transcript.jsonl"),
+                        session_dir.join("transcript.jsonl"),
+                    ];
 
-                    if let Some(t_path) = target {
-                        if let Some((prompt, ts)) = extract_first_prompt_from_transcript(&t_path) {
-                            session_map.entry(cid).or_insert((prompt, ts));
+                    for t_path in &possible_paths {
+                        if t_path.exists() {
+                            if let Some((prompt, ts)) = extract_first_prompt_from_transcript(t_path) {
+                                let entry = session_map.entry(cid.clone()).or_insert((prompt.clone(), ts));
+                                if ts > entry.1 {
+                                    entry.1 = ts;
+                                }
+                                if entry.0 == "New Conversation" && prompt != "New Conversation" {
+                                    entry.0 = prompt;
+                                }
+                            }
+                            break;
                         }
                     }
                 }
