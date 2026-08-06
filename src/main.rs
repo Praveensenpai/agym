@@ -15,7 +15,7 @@ use std::io;
 #[command(name = "agym")]
 #[command(author = "Praveensenpai")]
 #[command(disable_version_flag = true)]
-#[command(version = "0.6.10")]
+#[command(version = "0.6.11")]
 #[command(about = "Unified Antigravity CLI & Account Manager", long_about = None)]
 struct Cli {
     /// Show the application version
