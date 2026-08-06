@@ -16,6 +16,8 @@ use ratatui::{
     Terminal,
 };
 use std::io;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::time::Duration;
 
 pub fn style_header() -> Style {
     Style::default()
@@ -44,12 +46,24 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
     let mut state = TableState::default();
     let mut filter = String::new();
     let mut searching = false;
+    let mut is_refreshing = false;
     let mut accounts = list_account_infos(no_cache);
+
+    let (tx, rx): (Sender<Vec<crate::account::AccountInfo>>, Receiver<Vec<crate::account::AccountInfo>>) = channel();
+
     if !accounts.is_empty() {
         state.select(Some(0));
     }
 
     let res = loop {
+        if let Ok(fresh_accounts) = rx.try_recv() {
+            accounts = fresh_accounts;
+            is_refreshing = false;
+            if state.selected().is_none() && !accounts.is_empty() {
+                state.select(Some(0));
+            }
+        }
+
         let filtered_indices: Vec<usize> = accounts
             .iter()
             .enumerate()
@@ -84,7 +98,7 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
                 " 🤖 AGYM — Antigravity Accounts ({}) | Active: {} | Mode: {}",
                 accounts.len(),
                 active_acc,
-                if no_cache { "Live API (-n)" } else { "Cached" }
+                if is_refreshing { "Refreshing in background... ⏳" } else if no_cache { "Live API (-n)" } else { "Cached" }
             );
 
             let header = Paragraph::new(header_text)
@@ -129,109 +143,127 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
 
             f.render_stateful_widget(table, chunks[1], &mut state);
 
-            let status_text = if searching {
-                format!(" Search: {} (Press Enter to confirm, Esc to clear)", filter)
+            let (status_text, footer_style) = if is_refreshing {
+                (
+                    " ⏳ Fetching live account quotas in background... Navigate freely with [↑/↓]".to_string(),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                )
+            } else if searching {
+                (
+                    format!(" Search: {} (Press Enter to confirm, Esc to clear)", filter),
+                    style_header(),
+                )
             } else {
-                format!(
-                    " [Enter] Switch | [s] Sessions | [n] New Log | [d] Delete | [r] Refresh | [/] Filter | [q] Quit"
+                (
+                    " [Enter] Switch | [s] Sessions | [n] New Log | [d] Delete | [r] Refresh | [/] Filter | [q] Quit".to_string(),
+                    style_dimmed(),
                 )
             };
 
             let footer = Paragraph::new(status_text)
-                .style(style_dimmed())
+                .style(footer_style)
                 .block(Block::default().borders(Borders::ALL));
             f.render_widget(footer, chunks[2]);
         }) {
             break Err(e.into());
         }
 
-        if let Event::Key(key) = event::read()? {
-            if searching {
-                match key.code {
-                    KeyCode::Esc => {
-                        filter.clear();
-                        searching = false;
+        if event::poll(Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                if searching {
+                    match key.code {
+                        KeyCode::Esc => {
+                            filter.clear();
+                            searching = false;
+                        }
+                        KeyCode::Enter => {
+                            searching = false;
+                        }
+                        KeyCode::Backspace => {
+                            filter.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            filter.push(c);
+                        }
+                        _ => {}
                     }
-                    KeyCode::Enter => {
-                        searching = false;
-                    }
-                    KeyCode::Backspace => {
-                        filter.pop();
-                    }
-                    KeyCode::Char(c) => {
-                        filter.push(c);
-                    }
-                    _ => {}
-                }
-            } else {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break Ok(()),
-                    KeyCode::Char('/') => {
-                        searching = true;
-                    }
-                    KeyCode::Char('r') => {
-                        no_cache = true;
-                        accounts = list_account_infos(true);
-                    }
-                    KeyCode::Char('n') => {
-                        disable_raw_mode()?;
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                        let _ = prepare_new_session();
-                        return Ok(());
-                    }
-                    KeyCode::Char('d') | KeyCode::Delete => {
-                        disable_raw_mode()?;
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                        let _ = interactive_remove_account();
-                        return Ok(());
-                    }
-                    KeyCode::Char('s') | KeyCode::Tab => {
-                        disable_raw_mode()?;
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                        return run_sessions_tui();
-                    }
-                    KeyCode::Enter => {
-                        if let Some(i) = state.selected() {
-                            if i < filtered_indices.len() {
-                                let real_idx = filtered_indices[i];
-                                let target_email = &accounts[real_idx].email;
-                                set_active_account(target_email);
-                                break Ok(());
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break Ok(()),
+                        KeyCode::Char('/') => {
+                            searching = true;
+                        }
+                        KeyCode::Char('r') => {
+                            if !is_refreshing {
+                                no_cache = true;
+                                is_refreshing = true;
+                                let tx_clone = tx.clone();
+                                std::thread::spawn(move || {
+                                    let fresh = list_account_infos(true);
+                                    let _ = tx_clone.send(fresh);
+                                });
                             }
                         }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let i = match state.selected() {
-                            Some(i) => {
-                                if filtered_indices.is_empty() {
-                                    0
-                                } else if i >= filtered_indices.len() - 1 {
-                                    0
-                                } else {
-                                    i + 1
+                        KeyCode::Char('n') => {
+                            disable_raw_mode()?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                            let _ = prepare_new_session();
+                            return Ok(());
+                        }
+                        KeyCode::Char('d') | KeyCode::Delete => {
+                            disable_raw_mode()?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                            let _ = interactive_remove_account();
+                            return Ok(());
+                        }
+                        KeyCode::Char('s') | KeyCode::Tab => {
+                            disable_raw_mode()?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                            return run_sessions_tui();
+                        }
+                        KeyCode::Enter => {
+                            if let Some(i) = state.selected() {
+                                if i < filtered_indices.len() {
+                                    let real_idx = filtered_indices[i];
+                                    let target_email = &accounts[real_idx].email;
+                                    set_active_account(target_email);
+                                    break Ok(());
                                 }
                             }
-                            None => 0,
-                        };
-                        state.select(Some(i));
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        let i = match state.selected() {
-                            Some(i) => {
-                                if filtered_indices.is_empty() {
-                                    0
-                                } else if i == 0 {
-                                    filtered_indices.len().saturating_sub(1)
-                                } else {
-                                    i - 1
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let i = match state.selected() {
+                                Some(i) => {
+                                    if filtered_indices.is_empty() {
+                                        0
+                                    } else if i >= filtered_indices.len() - 1 {
+                                        0
+                                    } else {
+                                        i + 1
+                                    }
                                 }
-                            }
-                            None => 0,
-                        };
-                        state.select(Some(i));
+                                None => 0,
+                            };
+                            state.select(Some(i));
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            let i = match state.selected() {
+                                Some(i) => {
+                                    if filtered_indices.is_empty() {
+                                        0
+                                    } else if i == 0 {
+                                        filtered_indices.len().saturating_sub(1)
+                                    } else {
+                                        i - 1
+                                    }
+                                }
+                                None => 0,
+                            };
+                            state.select(Some(i));
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
@@ -386,84 +418,86 @@ pub fn run_sessions_tui() -> Result<()> {
             break Err(e.into());
         }
 
-        if let Event::Key(key) = event::read()? {
-            if searching {
-                match key.code {
-                    KeyCode::Esc => {
-                        filter.clear();
-                        searching = false;
+        if event::poll(Duration::from_millis(50))? {
+            if let Event::Key(key) = event::read()? {
+                if searching {
+                    match key.code {
+                        KeyCode::Esc => {
+                            filter.clear();
+                            searching = false;
+                        }
+                        KeyCode::Enter => {
+                            searching = false;
+                        }
+                        KeyCode::Backspace => {
+                            filter.pop();
+                        }
+                        KeyCode::Char(c) => {
+                            filter.push(c);
+                        }
+                        _ => {}
                     }
-                    KeyCode::Enter => {
-                        searching = false;
-                    }
-                    KeyCode::Backspace => {
-                        filter.pop();
-                    }
-                    KeyCode::Char(c) => {
-                        filter.push(c);
-                    }
-                    _ => {}
-                }
-            } else {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break Ok(()),
-                    KeyCode::Char('/') => {
-                        searching = true;
-                    }
-                    KeyCode::Char(' ') | KeyCode::Char('v') => {
-                        show_detail = !show_detail;
-                    }
-                    KeyCode::Char('a') | KeyCode::Tab => {
-                        disable_raw_mode()?;
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                        return run_accounts_tui(false);
-                    }
-                    KeyCode::Enter => {
-                        if let Some(i) = state.selected() {
-                            if i < filtered_indices.len() {
-                                let real_idx = filtered_indices[i];
-                                let target_cid = &sessions[real_idx].cid;
-                                disable_raw_mode()?;
-                                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                                std::process::Command::new("agy")
-                                    .args(["--resume", target_cid])
-                                    .status()?;
-                                return Ok(());
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break Ok(()),
+                        KeyCode::Char('/') => {
+                            searching = true;
+                        }
+                        KeyCode::Char(' ') | KeyCode::Char('v') => {
+                            show_detail = !show_detail;
+                        }
+                        KeyCode::Char('a') | KeyCode::Tab => {
+                            disable_raw_mode()?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                            return run_accounts_tui(false);
+                        }
+                        KeyCode::Enter => {
+                            if let Some(i) = state.selected() {
+                                if i < filtered_indices.len() {
+                                    let real_idx = filtered_indices[i];
+                                    let target_cid = &sessions[real_idx].cid;
+                                    disable_raw_mode()?;
+                                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                                    std::process::Command::new("agy")
+                                        .args(["resume", target_cid])
+                                        .status()?;
+                                    return Ok(());
+                                }
                             }
                         }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let i = match state.selected() {
-                            Some(i) => {
-                                if filtered_indices.is_empty() {
-                                    0
-                                } else if i >= filtered_indices.len() - 1 {
-                                    0
-                                } else {
-                                    i + 1
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let i = match state.selected() {
+                                Some(i) => {
+                                    if filtered_indices.is_empty() {
+                                        0
+                                    } else if i >= filtered_indices.len() - 1 {
+                                        0
+                                    } else {
+                                        i + 1
+                                    }
                                 }
-                            }
-                            None => 0,
-                        };
-                        state.select(Some(i));
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        let i = match state.selected() {
-                            Some(i) => {
-                                if filtered_indices.is_empty() {
-                                    0
-                                } else if i == 0 {
-                                    filtered_indices.len().saturating_sub(1)
-                                } else {
-                                    i - 1
+                                None => 0,
+                            };
+                            state.select(Some(i));
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            let i = match state.selected() {
+                                Some(i) => {
+                                    if filtered_indices.is_empty() {
+                                        0
+                                    } else if i == 0 {
+                                        filtered_indices.len().saturating_sub(1)
+                                    } else {
+                                        i - 1
+                                    }
                                 }
-                            }
-                            None => 0,
-                        };
-                        state.select(Some(i));
+                                None => 0,
+                            };
+                            state.select(Some(i));
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
