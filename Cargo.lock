@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agym"
-version = "0.6.19"
+version = "0.6.20"
 dependencies = [
  "anyhow",
  "base64",

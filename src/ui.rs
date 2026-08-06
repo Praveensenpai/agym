@@ -47,11 +47,17 @@ pub fn run_accounts_tui() -> Result<()> {
     let mut state = TableState::default();
     let mut filter = String::new();
     let mut searching = false;
-    let mut is_refreshing = true;
+    let initial_cached = list_account_infos_cached();
+    let has_valid_cache = !initial_cached.is_empty()
+        && initial_cached
+            .iter()
+            .all(|a| a.quota.as_ref().map_or(false, |q| !q.is_expired()));
+
+    let mut is_refreshing = !has_valid_cache;
     let mut last_refresh_time: Option<Instant> = None;
     let mut cooldown_msg: Option<(String, Instant)> = None;
 
-    let mut accounts = Vec::new();
+    let mut accounts = initial_cached;
 
     let (tx, rx): (
         Sender<(Vec<crate::account::AccountInfo>, bool)>,
@@ -62,15 +68,13 @@ pub fn run_accounts_tui() -> Result<()> {
         state.select(Some(0));
     }
 
-    // Load cache and live quotas away from the UI thread. The cache result is
-    // displayed first; a live fetch only happens if the cache is expired (>5 min).
-    let initial_tx = tx.clone();
-    std::thread::spawn(move || {
-        let cached = list_account_infos_cached();
-        let _ = initial_tx.send((cached, false));
-        let fresh = list_account_infos(false); // false = respect 5-min TTL
-        let _ = initial_tx.send((fresh, true));
-    });
+    if !has_valid_cache {
+        let initial_tx = tx.clone();
+        std::thread::spawn(move || {
+            let fresh = list_account_infos(false); // false = respect 5-min TTL
+            let _ = initial_tx.send((fresh, true));
+        });
+    }
 
     let res = loop {
         if let Ok((fresh_accounts, is_fresh)) = rx.try_recv() {
