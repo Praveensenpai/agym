@@ -15,8 +15,9 @@
 * ⚡ **Smart 5-Minute Quota Cache**: Caches usage metrics locally in `~/.gemini-accounts/.quota_cache.json` for instant UI execution.
 * 🔄 **Cache Bypass**: Supports `--no-cache` (`-n`) to force refreshing live quota on demand.
 * ➕ **Seamless New Session Flow**: Backs up your active session so you can log into a new account with zero setup.
+* 🗑️ **In-Menu Account Deletion**: Safely delete unused account profiles directly from the interactive TUI menu.
 * 🎯 **Interactive TUI Selector**: Select saved accounts or jump into sessions using `inquire`.
-* 🛠️ **CLI Subcommands**: Full CLI support for scripting (`agym switch`, `agym sessions`, `agym new`, `agym save`, `agym list`, `agym remove`).
+* 🛠️ **CLI Subcommands**: Streamlined CLI support for scripting (`agym <email>`, `agym sessions`, `agym new`, `agym save`, `agym list`).
 * 🐚 **Shell Autocompletions**: Native autocompletion support for `bash`, `zsh`, and `fish`.
 * 📦 **Single Standalone Binary**: Zero runtime dependencies.
 
@@ -69,49 +70,48 @@ agym completions fish > ~/.config/fish/completions/agym.fish
 
 ## 🚀 Usage
 
-### 1. Interactive Switcher (Default)
-Run `agym` with no arguments to open the interactive menu:
+### 1. Interactive Menu (Default)
+Run `agym` with no arguments to open the interactive selection menu (switch accounts, jump to sessions, save, log into new account, or delete accounts):
 
 ```bash
 agym
 ```
 
-### 2. Resume Previous Sessions
+### 2. Direct Account Switch
+Switch to a saved account directly by name or email:
+
+```bash
+agym user@gmail.com
+```
+
+### 3. Resume Previous Sessions
 Browse previous chat sessions and resume instantly:
 
 ```bash
 agym sessions # (or agym s)
 ```
 
-### 3. Bypass Quota Cache
+### 4. Bypass Quota Cache
 Force fetching fresh live quota directly from CloudCode API:
 
 ```bash
-agym --no-cache
+agym -n
 # or
 agym list --no-cache
 ```
 
-### 4. Log in to a New Account
+### 5. Log in to a New Account
 Back up your current session and prepare a fresh session to log into a new account:
 
 ```bash
 agym new # (or agym add)
 ```
-Then log in via `agy`, and run `agym save` (or `agym`) when finished to auto-detect and save your new account!
 
-### 5. Save Current Account Session
+### 6. Save Current Account Session
 Save your currently active Antigravity login session:
 
 ```bash
 agym save
-```
-
-### 6. Switch Account
-Switch to a saved account directly by name or email:
-
-```bash
-agym switch user@gmail.com
 ```
 
 ### 7. List Accounts
@@ -119,13 +119,6 @@ List all saved account profiles with model quota and cache timestamps:
 
 ```bash
 agym list
-```
-
-### 8. Remove Account
-Delete a saved account profile:
-
-```bash
-agym remove user@gmail.com
 ```
 
 ---

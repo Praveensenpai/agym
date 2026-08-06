@@ -13,9 +13,12 @@ use std::io;
 #[derive(Parser)]
 #[command(name = "agym")]
 #[command(author = "Praveensenpai")]
-#[command(version = "0.3.0")]
+#[command(version = "0.4.0")]
 #[command(about = "Unified Antigravity CLI & Account Manager", long_about = None)]
 struct Cli {
+    /// Account email or query to switch to directly
+    account: Option<String>,
+
     /// Bypass quota cache and fetch live quota from CloudCode API
     #[arg(short = 'n', long = "no-cache", global = true)]
     no_cache: bool,
@@ -26,12 +29,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Switch to an Antigravity account interactively or by email/query
-    #[command(alias = "acc")]
-    Switch {
-        /// Account email or query to switch to
-        account: Option<String>,
-    },
     /// Save active token from keyring as a saved account profile
     Save,
     /// Back up active account and prepare a fresh session to log in to a new account
@@ -46,11 +43,6 @@ enum Commands {
         #[arg(short = 'n', long = "no-cache")]
         no_cache: bool,
     },
-    /// Remove a saved Antigravity account
-    Remove {
-        /// Account email to remove
-        account: String,
-    },
     /// Generate shell autocompletion scripts (bash, zsh, fish, powershell, elvish)
     Completions {
         /// Target shell for autocompletions
@@ -61,15 +53,12 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    if let Some(target) = cli.account {
+        set_active_account(&target);
+        return Ok(());
+    }
+
     match cli.command {
-        Some(Commands::Switch { account }) => match account {
-            Some(name) => {
-                set_active_account(&name);
-            }
-            None => {
-                interactive_switch(cli.no_cache)?;
-            }
-        },
         Some(Commands::Save) => {
             if let Some(email) = save_current_account() {
                 println!("{} Saved current Antigravity account as '{}'", "✔".green().bold(), email.bold().cyan());
@@ -80,7 +69,6 @@ fn main() -> Result<()> {
         Some(Commands::New) => prepare_new_session()?,
         Some(Commands::Sessions) => pick_and_resume_session()?,
         Some(Commands::List { no_cache }) => list_all_accounts(cli.no_cache || no_cache)?,
-        Some(Commands::Remove { account }) => remove_account(&account)?,
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "agym", &mut io::stdout());

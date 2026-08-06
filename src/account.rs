@@ -237,6 +237,28 @@ pub fn remove_account(account_name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn interactive_remove_account() -> Result<()> {
+    let accounts = list_account_infos(false);
+    if accounts.is_empty() {
+        println!("{}", "No saved accounts to remove.".yellow());
+        return Ok(());
+    }
+
+    let options: Vec<String> = accounts.iter().map(|acc| acc.email.clone()).collect();
+    let ans = Select::new("🗑️ Select Account to Delete:", options).prompt();
+
+    match ans {
+        Ok(selected) => {
+            remove_account(&selected)?;
+        }
+        Err(_) => {
+            println!("Operation cancelled.");
+        }
+    }
+
+    Ok(())
+}
+
 pub fn prepare_new_session() -> Result<()> {
     let _ = save_current_account();
 
@@ -340,6 +362,7 @@ pub fn interactive_switch(no_cache: bool) -> Result<()> {
 
     options.push("💾 Save Current Account".blue().to_string());
     options.push("➕ New Session (Log into new account)".yellow().to_string());
+    options.push("🗑️ Delete Account".red().to_string());
 
     let ans = Select::new("Select Antigravity Action / Account:", options).prompt();
 
@@ -355,6 +378,8 @@ pub fn interactive_switch(no_cache: bool) -> Result<()> {
                 }
             } else if choice.contains("New Session") {
                 prepare_new_session()?;
+            } else if choice.contains("Delete Account") {
+                interactive_remove_account()?;
             } else {
                 let clean_name = choice
                     .split_whitespace()
