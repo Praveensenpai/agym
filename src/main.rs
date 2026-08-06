@@ -35,9 +35,6 @@ enum Commands {
     /// Back up active account and prepare a fresh session to log in to a new account
     #[command(alias = "add")]
     New,
-    /// Pick and resume a previous Antigravity chat session
-    #[command(alias = "s")]
-    Sessions,
     /// List all saved Antigravity accounts with model quota
     List {
         /// Bypass quota cache and fetch live quota from CloudCode API
@@ -68,7 +65,6 @@ fn main() -> Result<()> {
             }
         }
         Some(Commands::New) => prepare_new_session()?,
-        Some(Commands::Sessions) => ui::run_sessions_tui()?,
         Some(Commands::List { no_cache }) => list_all_accounts(cli.no_cache || no_cache)?,
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();
