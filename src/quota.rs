@@ -24,6 +24,10 @@ const CACHE_TTL_SECONDS: u64 = 300; // 5 minutes
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountQuotaInfo {
+    #[serde(default)]
+    pub gemini_percent: Option<u32>,
+    #[serde(default)]
+    pub claude_percent: Option<u32>,
     pub top_model_name: Option<String>,
     pub top_model_percent: Option<u32>,
     #[serde(default)]
@@ -34,9 +38,14 @@ pub struct AccountQuotaInfo {
 
 impl AccountQuotaInfo {
     pub fn display_badge(&self) -> String {
-        match (&self.top_model_name, self.top_model_percent) {
-            (Some(name), Some(pct)) => format!("[{} {}% left]", name, pct),
-            _ => "[quota unavailable]".to_string(),
+        match (self.gemini_percent, self.claude_percent) {
+            (Some(gem), Some(cld)) => format!("[Gemini: {}% | Claude: {}%]", gem, cld),
+            (Some(gem), None) => format!("[Gemini: {}%]", gem),
+            (None, Some(cld)) => format!("[Claude: {}%]", cld),
+            _ => match (&self.top_model_name, self.top_model_percent) {
+                (Some(name), Some(pct)) => format!("[{} {}% left]", name, pct),
+                _ => "[quota unavailable]".to_string(),
+            },
         }
     }
 
@@ -201,43 +210,45 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
     let val = res_val.ok_or_else(|| anyhow!("Failed to fetch models"))?;
     let models = val.get("models").and_then(|m| m.as_object()).ok_or_else(|| anyhow!("No models object"))?;
 
-    let mut chosen_name = "Gemini".to_string();
-    let mut chosen_pct = 100u32;
-    let mut found = false;
+    let mut gemini_percent: Option<u32> = None;
+    let mut claude_percent: Option<u32> = None;
 
-    let preferred_keys = ["gemini-2.5-pro", "gemini-3.6-flash-high", "gemini-3.1-flash-lite", "gemini-1.5-pro"];
-
-    for key in preferred_keys {
+    let gemini_keys = ["gemini-2.5-pro", "gemini-3.6-flash-high", "gemini-3.1-pro-low", "gemini-3.1-flash-lite"];
+    for key in gemini_keys {
         if let Some(m_info) = models.get(key) {
             if let Some(frac) = m_info.get("quotaInfo").and_then(|q| q.get("remainingFraction")).and_then(|f| f.as_f64()) {
-                let display = if key.contains("pro") {
-                    "Pro"
-                } else if key.contains("flash") {
-                    "Flash"
-                } else {
-                    "Gemini"
-                };
-                chosen_name = display.to_string();
-                chosen_pct = (frac * 100.0) as u32;
-                found = true;
+                gemini_percent = Some((frac * 100.0) as u32);
                 break;
             }
         }
     }
-
-    if !found {
+    if gemini_percent.is_none() {
         for (k, m_info) in models {
+            if k.contains("gemini") {
+                if let Some(frac) = m_info.get("quotaInfo").and_then(|q| q.get("remainingFraction")).and_then(|f| f.as_f64()) {
+                    gemini_percent = Some((frac * 100.0) as u32);
+                    break;
+                }
+            }
+        }
+    }
+
+    let claude_keys = ["claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"];
+    for key in claude_keys {
+        if let Some(m_info) = models.get(key) {
             if let Some(frac) = m_info.get("quotaInfo").and_then(|q| q.get("remainingFraction")).and_then(|f| f.as_f64()) {
-                let display = if k.contains("pro") {
-                    "Pro"
-                } else if k.contains("flash") {
-                    "Flash"
-                } else {
-                    "Gemini"
-                };
-                chosen_name = display.to_string();
-                chosen_pct = (frac * 100.0) as u32;
+                claude_percent = Some((frac * 100.0) as u32);
                 break;
+            }
+        }
+    }
+    if claude_percent.is_none() {
+        for (k, m_info) in models {
+            if k.contains("claude") || k.contains("gpt") {
+                if let Some(frac) = m_info.get("quotaInfo").and_then(|q| q.get("remainingFraction")).and_then(|f| f.as_f64()) {
+                    claude_percent = Some((frac * 100.0) as u32);
+                    break;
+                }
             }
         }
     }
@@ -248,8 +259,10 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
         .as_secs();
 
     Ok(AccountQuotaInfo {
-        top_model_name: Some(chosen_name),
-        top_model_percent: Some(chosen_pct),
+        gemini_percent,
+        claude_percent,
+        top_model_name: Some("Gemini".to_string()),
+        top_model_percent: gemini_percent,
         fetched_at: now,
         is_fresh: true,
     })
