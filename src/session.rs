@@ -1,10 +1,22 @@
 use anyhow::Result;
 use chrono::{DateTime, Local};
-use colored::*;
-use inquire::Select;
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    ExecutableCommand,
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    Terminal,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
+use std::io::stdout;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -58,8 +70,6 @@ pub fn sanitize_prompt(raw: &str) -> String {
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         "New Conversation".to_string()
-    } else if trimmed.chars().count() > 60 {
-        format!("{}...", trimmed.chars().take(57).collect::<String>())
     } else {
         trimmed.to_string()
     }
@@ -172,38 +182,174 @@ pub fn scan_agy_sessions() -> Vec<AgySession> {
 pub fn pick_and_resume_session() -> Result<()> {
     let sessions = scan_agy_sessions();
     if sessions.is_empty() {
-        println!("{}", "No Antigravity session history found.".yellow());
+        println!("No Antigravity session history found.");
         return Ok(());
     }
 
-    let options: Vec<String> = sessions
-        .iter()
-        .map(|s| {
-            format!(
-                "{} [{}] {}",
-                s.short_id().cyan(),
-                s.formatted_time().dimmed(),
-                s.prompt.bold()
+    enable_raw_mode()?;
+    stdout().execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+
+    let mut selected_index = 0;
+    let mut search_query = String::new();
+    let mut is_searching = false;
+
+    let selected_conversation_id = loop {
+        let filtered: Vec<&AgySession> = sessions
+            .iter()
+            .filter(|s| {
+                if search_query.is_empty() {
+                    true
+                } else {
+                    let q = search_query.to_lowercase();
+                    s.prompt.to_lowercase().contains(&q)
+                        || s.short_id().to_lowercase().contains(&q)
+                        || s.formatted_time().to_lowercase().contains(&q)
+                }
+            })
+            .collect();
+
+        if selected_index >= filtered.len() && !filtered.is_empty() {
+            selected_index = filtered.len() - 1;
+        }
+
+        terminal.draw(|f| {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(5),
+                    Constraint::Length(if is_searching { 3 } else { 1 }),
+                ])
+                .split(f.area());
+
+            let header_cells = ["ID", "TIMESTAMP", "PROMPT / TITLE"]
+                .iter()
+                .map(|h| Cell::from(*h).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+            let header = Row::new(header_cells)
+                .style(Style::default().bg(Color::Rgb(40, 42, 54)))
+                .height(1);
+
+            let rows: Vec<Row> = filtered
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let style = if i == selected_index {
+                        Style::default()
+                            .fg(Color::Rgb(255, 255, 255))
+                            .bg(Color::Rgb(98, 114, 164))
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Rgb(248, 248, 242))
+                    };
+
+                    Row::new(vec![
+                        Cell::from(Span::styled(s.short_id(), Style::default().fg(Color::Rgb(189, 147, 249)).add_modifier(Modifier::BOLD))),
+                        Cell::from(Span::styled(s.formatted_time(), Style::default().fg(Color::Rgb(241, 250, 140)))),
+                        Cell::from(s.prompt.clone()),
+                    ])
+                    .style(style)
+                })
+                .collect();
+
+            let title = format!(" 💬 Antigravity Session Explorer ({} sessions) ", filtered.len());
+            let table = Table::new(
+                rows,
+                [
+                    Constraint::Length(10),
+                    Constraint::Length(18),
+                    Constraint::Min(30),
+                ],
             )
-        })
-        .collect();
+            .header(header)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .title_style(Style::default().fg(Color::Rgb(80, 250, 123)).add_modifier(Modifier::BOLD)),
+            );
 
-    let ans = Select::new("💬 Select Antigravity Session to Resume:", options).prompt();
+            f.render_widget(table, chunks[0]);
 
-    match ans {
-        Ok(choice) => {
-            let short_id = choice.split_whitespace().next().unwrap_or("").trim();
-            if let Some(target) = sessions.iter().find(|s| s.short_id() == short_id) {
-                println!("{} Resuming Antigravity session {}...", "🚀".bold(), target.conversation_id.cyan());
-                let mut child = Command::new("agy")
-                    .args(["resume", &target.conversation_id])
-                    .spawn()?;
-                let _ = child.wait();
+            if is_searching {
+                let search_bar = Paragraph::new(format!("Search: {}_", search_query))
+                    .style(Style::default().fg(Color::Yellow))
+                    .block(Block::default().borders(Borders::ALL).title(" Filter Sessions "));
+                f.render_widget(search_bar, chunks[1]);
+            } else {
+                let help_text = if search_query.is_empty() {
+                    " [↑/↓/j/k] Navigate • [/] Filter • [Enter] Resume • [Esc/q] Quit "
+                } else {
+                    " [↑/↓/j/k] Navigate • [/] Edit Filter • [Backspace] Clear • [Enter] Resume • [Esc] Quit "
+                };
+                let footer = Paragraph::new(help_text)
+                    .style(Style::default().fg(Color::DarkGray));
+                f.render_widget(footer, chunks[1]);
+            }
+        })?;
+
+        if event::poll(std::time::Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    if is_searching {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Enter => {
+                                is_searching = false;
+                            }
+                            KeyCode::Backspace => {
+                                search_query.pop();
+                                selected_index = 0;
+                            }
+                            KeyCode::Char(c) => {
+                                search_query.push(c);
+                                selected_index = 0;
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                break None;
+                            }
+                            KeyCode::Char('/') => {
+                                is_searching = true;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if selected_index > 0 {
+                                    selected_index -= 1;
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if !filtered.is_empty() && selected_index < filtered.len() - 1 {
+                                    selected_index += 1;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if let Some(session) = filtered.get(selected_index) {
+                                    break Some(session.conversation_id.clone());
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                search_query.clear();
+                                selected_index = 0;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
         }
-        Err(_) => {
-            println!("Operation cancelled.");
-        }
+    };
+
+    disable_raw_mode()?;
+    stdout().execute(LeaveAlternateScreen)?;
+
+    if let Some(cid) = selected_conversation_id {
+        println!("🚀 Resuming Antigravity session {}...", cid);
+        let mut child = Command::new("agy")
+            .args(["resume", &cid])
+            .spawn()?;
+        let _ = child.wait();
     }
 
     Ok(())
