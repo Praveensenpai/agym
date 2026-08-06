@@ -20,10 +20,6 @@ struct Cli {
     /// Account email or query to switch to directly
     account: Option<String>,
 
-    /// Bypass quota cache and fetch live quota from CloudCode API
-    #[arg(short = 'n', long = "no-cache", global = true)]
-    no_cache: bool,
-
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -59,7 +55,7 @@ fn main() -> Result<()> {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "agym", &mut io::stdout());
         }
-        None => ui::run_accounts_tui(cli.no_cache)?,
+        None => ui::run_accounts_tui()?,
     }
 
     Ok(())

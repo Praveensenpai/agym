@@ -36,7 +36,7 @@ pub fn style_dimmed() -> Style {
     Style::default().fg(Color::DarkGray)
 }
 
-pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
+pub fn run_accounts_tui() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -50,7 +50,7 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
     let mut last_refresh_time: Option<Instant> = None;
     let mut cooldown_msg: Option<(String, Instant)> = None;
 
-    let mut accounts = list_account_infos(no_cache);
+    let mut accounts = list_account_infos(false);
 
     let (tx, rx): (Sender<Vec<crate::account::AccountInfo>>, Receiver<Vec<crate::account::AccountInfo>>) = channel();
 
@@ -98,10 +98,10 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
                 .unwrap_or("None");
 
             let header_text = format!(
-                " 🤖 AGYM — Antigravity Accounts ({}) | Active: {} | Mode: {}",
+                " 🤖 AGYM — Antigravity Accounts ({}) | Active: {}{}",
                 accounts.len(),
                 active_acc,
-                if is_refreshing { "Refreshing in background... ⏳" } else if no_cache { "Live API (-n)" } else { "Cached" }
+                if is_refreshing { " | Refreshing... ⏳" } else { "" }
             );
 
             let header = Paragraph::new(header_text)
@@ -227,7 +227,6 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
                                         now + Duration::from_secs(3),
                                     ));
                                 } else {
-                                    no_cache = true;
                                     is_refreshing = true;
                                     last_refresh_time = Some(now);
                                     let tx_clone = tx.clone();
@@ -237,7 +236,6 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
                                     });
                                 }
                             } else {
-                                no_cache = true;
                                 is_refreshing = true;
                                 last_refresh_time = Some(now);
                                 let tx_clone = tx.clone();
@@ -492,7 +490,7 @@ pub fn run_sessions_tui() -> Result<()> {
                         KeyCode::Char('a') | KeyCode::Tab => {
                             disable_raw_mode()?;
                             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                            return run_accounts_tui(false);
+                            return run_accounts_tui();
                         }
                         KeyCode::Enter => {
                             if let Some(i) = state.selected() {
