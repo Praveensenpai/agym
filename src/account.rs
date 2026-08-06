@@ -152,6 +152,7 @@ pub fn save_current_account() -> Option<String> {
     let file_path = acc_dir.join(format!("{}.json", email));
     if let Ok(mut f) = File::create(&file_path) {
         let _ = f.write_all(token_json.as_bytes());
+        clear_quota_cache();
         return Some(email);
     }
     None

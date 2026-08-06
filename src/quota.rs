@@ -33,6 +33,8 @@ const CACHE_TTL_SECONDS: u64 = 300; // 5 minutes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountQuotaInfo {
     #[serde(default)]
+    pub plan_type: Option<String>,
+    #[serde(default)]
     pub gemini_percent: Option<u32>,
     #[serde(default)]
     pub claude_percent: Option<u32>,
@@ -46,12 +48,16 @@ pub struct AccountQuotaInfo {
 
 impl AccountQuotaInfo {
     pub fn display_badge(&self) -> String {
+        let plan_prefix = match &self.plan_type {
+            Some(p) if !p.is_empty() => format!("{} | ", p),
+            _ => "".to_string(),
+        };
         match (self.gemini_percent, self.claude_percent) {
-            (Some(gem), Some(cld)) => format!("[Gemini: {}% | Claude: {}%]", gem, cld),
-            (Some(gem), None) => format!("[Gemini: {}%]", gem),
-            (None, Some(cld)) => format!("[Claude: {}%]", cld),
+            (Some(gem), Some(cld)) => format!("[{}Gemini: {}% | Claude: {}%]", plan_prefix, gem, cld),
+            (Some(gem), None) => format!("[{}Gemini: {}%]", plan_prefix, gem),
+            (None, Some(cld)) => format!("[{}Claude: {}%]", plan_prefix, cld),
             _ => match (&self.top_model_name, self.top_model_percent) {
-                (Some(name), Some(pct)) => format!("[{} {}% left]", name, pct),
+                (Some(name), Some(pct)) => format!("[{}{} {}% left]", plan_prefix, name, pct),
                 _ => "[quota unavailable]".to_string(),
             },
         }
@@ -106,6 +112,12 @@ pub fn save_quota_cache(cache: &HashMap<String, AccountQuotaInfo>) {
         if let Ok(content) = serde_json::to_string_pretty(cache) {
             let _ = fs::write(path, content);
         }
+    }
+}
+
+pub fn clear_quota_cache() {
+    if let Some(path) = get_cache_file_path() {
+        let _ = fs::remove_file(path);
     }
 }
 
@@ -300,12 +312,20 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
         }
     }
 
+    let plan_type = val.get("subscriptionTier")
+        .or_else(|| val.get("planType"))
+        .or_else(|| val.get("tier"))
+        .or_else(|| val.get("quotaTier"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
     Ok(AccountQuotaInfo {
+        plan_type,
         gemini_percent,
         claude_percent,
         top_model_name: Some("Gemini".to_string()),
