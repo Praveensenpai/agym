@@ -1,6 +1,7 @@
 mod account;
 mod quota;
 mod session;
+mod ui;
 
 use account::*;
 use anyhow::Result;
@@ -13,7 +14,7 @@ use std::io;
 #[derive(Parser)]
 #[command(name = "agym")]
 #[command(author = "Praveensenpai")]
-#[command(version = "0.6.1")]
+#[command(version = "0.6.2")]
 #[command(about = "Unified Antigravity CLI & Account Manager", long_about = None)]
 struct Cli {
     /// Account email or query to switch to directly
@@ -67,13 +68,13 @@ fn main() -> Result<()> {
             }
         }
         Some(Commands::New) => prepare_new_session()?,
-        Some(Commands::Sessions) => pick_and_resume_session()?,
+        Some(Commands::Sessions) => ui::run_sessions_tui()?,
         Some(Commands::List { no_cache }) => list_all_accounts(cli.no_cache || no_cache)?,
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "agym", &mut io::stdout());
         }
-        None => interactive_switch(cli.no_cache)?,
+        None => ui::run_accounts_tui(cli.no_cache)?,
     }
 
     Ok(())
