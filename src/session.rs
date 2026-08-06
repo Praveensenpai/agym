@@ -1,412 +1,202 @@
+use anyhow::Result;
 use chrono::{DateTime, Local};
-use crossterm::{
-    cursor,
-    event::{self, Event, KeyCode, KeyModifiers},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use regex::Regex;
+use colored::*;
+use inquire::Select;
+use serde_json::Value;
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{stdout, BufRead, BufReader, Write};
-use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
-pub struct SessionInfo {
-    pub cid: String,
-    pub short_cid: String,
-    pub mtime: u64,
-    pub datetime: String,
-    pub size_bytes: u64,
-    pub size_fmt: String,
-    pub line_count: usize,
-    pub summary: String,
-    pub full_prompt: String,
-    pub profile: Option<String>,
+pub struct AgySession {
+    pub conversation_id: String,
+    pub prompt: String,
+    pub timestamp: u64,
 }
 
-fn format_bytes(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-
-    if bytes >= GB {
-        format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
-    } else {
-        format!("{} B", bytes)
-    }
-}
-
-pub fn extract_clean_prompt(content: &str) -> (String, String) {
-    let mut raw_text = content.to_string();
-
-    if let Some(start) = raw_text.find("<USER_REQUEST>") {
-        if let Some(end) = raw_text.find("</USER_REQUEST>") {
-            if end > start + 14 {
-                raw_text = raw_text[start + 14..end].to_string();
+impl AgySession {
+    pub fn formatted_time(&self) -> String {
+        if self.timestamp == 0 {
+            return "unknown time".to_string();
+        }
+        let naive = DateTime::from_timestamp(self.timestamp as i64, 0);
+        match naive {
+            Some(utc) => {
+                let local: DateTime<Local> = DateTime::from(utc);
+                local.format("%Y-%m-%d %H:%M").to_string()
             }
+            None => "unknown time".to_string(),
         }
     }
 
-    if let Some(start) = raw_text.find("<ADDITIONAL_METADATA>") {
-        if let Some(end) = raw_text.find("</ADDITIONAL_METADATA>") {
-            if end > start {
-                let mut cleaned = raw_text[..start].to_string();
-                cleaned.push_str(&raw_text[end + 22..]);
-                raw_text = cleaned;
-            }
+    pub fn short_id(&self) -> String {
+        if self.conversation_id.len() >= 8 {
+            self.conversation_id[..8].to_string()
         } else {
-            raw_text = raw_text[..start].to_string();
+            self.conversation_id.clone()
+        }
+    }
+}
+
+pub fn sanitize_prompt(raw: &str) -> String {
+    let cleaned = raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| {
+            !l.is_empty()
+                && !l.starts_with("<ADDITIONAL_METADATA>")
+                && !l.starts_with("<USER_SETTINGS_CHANGE>")
+                && !l.starts_with("The current local time is:")
+                && !l.starts_with("The user changed setting")
+        })
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        "New Conversation".to_string()
+    } else if trimmed.chars().count() > 60 {
+        format!("{}...", trimmed.chars().take(57).collect::<String>())
+    } else {
+        trimmed.to_string()
+    }
+}
+
+pub fn get_search_dirs() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/paisen"));
+    let mut dirs = vec![
+        home.join(".gemini/antigravity-cli/brain"),
+        home.join(".antigravity-agent/brain"),
+    ];
+
+    let profiles_dir = home.join(".gemini-profiles");
+    if profiles_dir.exists() {
+        if let Ok(entries) = fs::read_dir(profiles_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path.join("antigravity-cli/brain"));
+                }
+            }
         }
     }
 
-    let html_re = Regex::new(r"<[^>]+>").unwrap();
-    let no_tags = html_re.replace_all(&raw_text, "").to_string();
+    dirs
+}
 
-    let lines: Vec<&str> = no_tags
-        .lines()
-        .filter(|l| {
-            let trim = l.trim();
-            !trim.is_empty()
-                && !trim.starts_with("The current local time is:")
-                && !trim.starts_with("The user changed setting")
-                && !trim.starts_with("No need to comment on this change")
-                && !trim.starts_with("If reporting what model you are")
-                && !trim.starts_with("You can embed this image in an artifact")
-                && !trim.starts_with("Error: stream reading error")
-                && !trim.starts_with("Error: request failed")
+pub fn extract_first_prompt_from_transcript(path: &Path) -> Option<(String, u64)> {
+    let meta = path.metadata().ok()?;
+    let modified_ts = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        if line.contains("\"USER_INPUT\"") || line.contains("\"type\":\"USER_INPUT\"") {
+            if let Ok(json) = serde_json::from_str::<Value>(line) {
+                if let Some(text) = json.get("content").and_then(|c| c.as_str()) {
+                    let sanitized = sanitize_prompt(text);
+                    if sanitized != "New Conversation" {
+                        return Some((sanitized, modified_ts));
+                    }
+                }
+            }
+        }
+    }
+
+    Some(("New Conversation".to_string(), modified_ts))
+}
+
+pub fn scan_agy_sessions() -> Vec<AgySession> {
+    let search_dirs = get_search_dirs();
+    let mut session_map: HashMap<String, (String, u64)> = HashMap::new();
+
+    for dir in search_dirs {
+        if !dir.exists() {
+            continue;
+        }
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let session_dir = entry.path();
+                if session_dir.is_dir() {
+                    let cid = session_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    if cid.starts_with('.') || cid == "scratch" {
+                        continue;
+                    }
+                    let transcript_path = session_dir.join("logs/transcript.jsonl");
+                    let alt_transcript = session_dir.join("transcript.jsonl");
+
+                    let target = if transcript_path.exists() {
+                        Some(transcript_path)
+                    } else if alt_transcript.exists() {
+                        Some(alt_transcript)
+                    } else {
+                        None
+                    };
+
+                    if let Some(t_path) = target {
+                        if let Some((prompt, ts)) = extract_first_prompt_from_transcript(&t_path) {
+                            session_map.entry(cid).or_insert((prompt, ts));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut sessions: Vec<AgySession> = session_map
+        .into_iter()
+        .map(|(conversation_id, (prompt, timestamp))| AgySession {
+            conversation_id,
+            prompt,
+            timestamp,
         })
         .collect();
 
-    let full = lines.join("\n");
-    let single_line = lines.join(" ").split_whitespace().collect::<Vec<_>>().join(" ");
-
-    (single_line.clone(), full)
+    sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    sessions
 }
 
-pub fn pick_session() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/paisen".to_string());
-    let home_path = PathBuf::from(&home);
-
-    let search_roots = vec![
-        home_path.join(".gemini"),
-        home_path.join(".gemini-profiles"),
-    ];
-
-    let mut sessions_map: HashMap<String, SessionInfo> = HashMap::new();
-
-    for root in search_roots {
-        if !root.exists() {
-            continue;
-        }
-
-        for entry in WalkDir::new(&root).max_depth(20).into_iter().filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.file_name() == Some(std::ffi::OsStr::new("transcript.jsonl")) {
-                if let Some(logs_dir) = path.parent() {
-                    if logs_dir.file_name() == Some(std::ffi::OsStr::new("logs")) {
-                        if let Some(sys_gen) = logs_dir.parent() {
-                            if sys_gen.file_name() == Some(std::ffi::OsStr::new(".system_generated")) {
-                                if let Some(cid_dir) = sys_gen.parent() {
-                                    let cid = cid_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                    if cid.is_empty() {
-                                        continue;
-                                    }
-
-                                    let metadata = match fs::metadata(path) {
-                                        Ok(m) => m,
-                                        Err(_) => continue,
-                                    };
-
-                                    let size_bytes = metadata.len();
-                                    let size_fmt = format_bytes(size_bytes);
-
-                                    let mtime = metadata
-                                        .modified()
-                                        .ok()
-                                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                                        .map(|d| d.as_secs())
-                                        .unwrap_or(0);
-
-                                    let mut summary = String::new();
-                                    let mut full_prompt = String::new();
-                                    let mut line_count = 0;
-
-                                    if let Ok(file) = File::open(path) {
-                                        let reader = BufReader::new(file);
-                                        for line in reader.lines().filter_map(|l| l.ok()) {
-                                            line_count += 1;
-                                            if summary.is_empty() && line.contains(r#""type":"USER_INPUT""#) {
-                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                                                    if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
-                                                        let (sum, fp) = extract_clean_prompt(content);
-                                                        if !sum.trim().is_empty() {
-                                                            summary = sum;
-                                                            full_prompt = fp;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    if summary.is_empty() {
-                                        summary = "(No user prompt recorded)".to_string();
-                                        full_prompt = "(No user prompt recorded)".to_string();
-                                    }
-
-                                    let mut profile: Option<String> = None;
-                                    if let Ok(rel) = path.strip_prefix(&home_path.join(".gemini-profiles")) {
-                                        if let Some(first_comp) = rel.components().next() {
-                                            let p_name = first_comp.as_os_str().to_string_lossy().to_string();
-                                            if !p_name.is_empty() {
-                                                profile = Some(p_name);
-                                            }
-                                        }
-                                    }
-
-                                    let short_cid = if cid.len() >= 8 {
-                                        cid[..8].to_string()
-                                    } else {
-                                        cid.clone()
-                                    };
-
-                                    let dt = DateTime::from_timestamp(mtime as i64, 0)
-                                        .map(|t| t.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string())
-                                        .unwrap_or_else(|| "Unknown".to_string());
-
-                                    let info = SessionInfo {
-                                        cid: cid.clone(),
-                                        short_cid,
-                                        mtime,
-                                        datetime: dt,
-                                        size_bytes,
-                                        size_fmt,
-                                        line_count,
-                                        summary,
-                                        full_prompt,
-                                        profile,
-                                    };
-
-                                    sessions_map
-                                        .entry(cid)
-                                        .and_modify(|existing| {
-                                            if mtime > existing.mtime {
-                                                *existing = info.clone();
-                                            }
-                                        })
-                                        .or_insert(info);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let mut sessions: Vec<SessionInfo> = sessions_map.into_values().collect();
+pub fn pick_and_resume_session() -> Result<()> {
+    let sessions = scan_agy_sessions();
     if sessions.is_empty() {
-        println!("No AGY sessions found.");
-        return;
+        println!("{}", "No Antigravity session history found.".yellow());
+        return Ok(());
     }
 
-    sessions.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+    let options: Vec<String> = sessions
+        .iter()
+        .map(|s| {
+            format!(
+                "{} [{}] {}",
+                s.short_id().cyan(),
+                s.formatted_time().dimmed(),
+                s.prompt.bold()
+            )
+        })
+        .collect();
 
-    let mut search_query = String::new();
-    let mut selected_idx = 0;
-    let mut expanded_cid: Option<String> = None;
+    let ans = Select::new("💬 Select Antigravity Session to Resume:", options).prompt();
 
-    let _ = enable_raw_mode();
-    let mut out = stdout();
-    let _ = execute!(out, EnterAlternateScreen, cursor::Hide);
-
-    let result_session_opt = loop {
-        let (term_cols, term_rows) = crossterm::terminal::size().unwrap_or((100, 30));
-        let cols_usize = term_cols as usize;
-
-        let filtered: Vec<&SessionInfo> = sessions
-            .iter()
-            .filter(|s| {
-                if search_query.is_empty() {
-                    true
-                } else {
-                    let q = search_query.to_lowercase();
-                    s.summary.to_lowercase().contains(&q)
-                        || s.cid.to_lowercase().contains(&q)
-                        || s.datetime.contains(&q)
-                        || s.profile.as_ref().map_or(false, |p| p.to_lowercase().contains(&q))
-                }
-            })
-            .collect();
-
-        if selected_idx >= filtered.len() && !filtered.is_empty() {
-            selected_idx = filtered.len() - 1;
-        }
-
-        let _ = execute!(
-            out,
-            crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
-            crossterm::cursor::MoveTo(0, 0)
-        );
-
-        let count_str = format!("({}/{} sessions)", filtered.len(), sessions.len());
-        let sep = "─".repeat(cols_usize.min(120));
-        print!("\x1b[38;2;189;147;249m{}\x1b[0m\r\n", sep);
-        print!(
-            "\x1b[1m\x1b[38;2;139;233;253m🔍 Search AGY Session \x1b[38;2;98;114;164m{}\x1b[38;2;139;233;253m > \x1b[38;2;80;250;123m{}\x1b[0m\r\n",
-            count_str, search_query
-        );
-        print!("\x1b[38;2;98;114;164m[ ↑↓: Move | Space/v: Details | Enter: Resume | Esc: Exit ]\x1b[0m\r\n");
-        print!("\x1b[38;2;189;147;249m{}\x1b[0m\r\n\r\n", sep);
-
-        if filtered.is_empty() {
-            print!("  \x1b[38;2;255;85;85mNo matching sessions found.\x1b[0m\r\n");
-        } else {
-            // Calculate available line budget for session list items
-            // Header takes ~6 lines (sep, search line, help line, sep, blank line)
-            let avail_height = (term_rows as usize).saturating_sub(6).max(3);
-
-            let get_item_height = |idx: usize| -> usize {
-                let s = filtered[idx];
-                if expanded_cid.as_ref() == Some(&s.cid) {
-                    let p_lines = s.full_prompt.lines().take(6).count();
-                    let prof_line = if s.profile.is_some() { 1 } else { 0 };
-                    1 + 4 + prof_line + p_lines + 1
-                } else {
-                    1
-                }
-            };
-
-            // Calculate start_idx backward from selected_idx so selected_idx fits in viewport
-            let mut start_idx = selected_idx;
-            let mut h_acc = get_item_height(selected_idx);
-            while start_idx > 0 {
-                let prev_h = get_item_height(start_idx - 1);
-                if h_acc + prev_h > avail_height {
-                    break;
-                }
-                start_idx -= 1;
-                h_acc += prev_h;
-            }
-
-            // Compute available prompt width dynamically
-            let avail_prompt_width = cols_usize.saturating_sub(46).max(15);
-            let mut rendered_height = 0;
-
-            for idx in start_idx..filtered.len() {
-                let item_h = get_item_height(idx);
-                if rendered_height > 0 && rendered_height + item_h > avail_height {
-                    break;
-                }
-                rendered_height += item_h;
-
-                let s = filtered[idx];
-                let is_selected = idx == selected_idx;
-                let is_expanded = expanded_cid.as_ref() == Some(&s.cid);
-
-                let trunc_summary = if s.summary.chars().count() > avail_prompt_width {
-                    let text: String = s.summary.chars().take(avail_prompt_width.saturating_sub(3)).collect();
-                    format!("{}...", text)
-                } else {
-                    s.summary.clone()
-                };
-
-                let padded_size = format!("{:>8}", s.size_fmt);
-
-                if is_selected {
-                    print!(
-                        " \x1b[38;2;80;250;123m▶\x1b[0m \x1b[1m\x1b[38;2;139;233;253m{}\x1b[0m │ \x1b[38;2;255;121;198m{}\x1b[0m │ \x1b[38;2;241;250;140m{}\x1b[0m │ \x1b[1m\x1b[38;2;248;248;242m{}\x1b[0m\r\n",
-                        s.datetime, s.short_cid, padded_size, trunc_summary
-                    );
-                } else {
-                    print!(
-                        "   \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m │ \x1b[38;2;98;114;164m{}\x1b[0m\r\n",
-                        s.datetime, s.short_cid, padded_size, trunc_summary
-                    );
-                }
-
-                if is_expanded {
-                    let box_w = cols_usize.saturating_sub(6).min(100);
-                    let top_bar = format!("┌─ 🔍 FULL SESSION DETAILS ({}) {}", s.size_fmt, "─".repeat(box_w.saturating_sub(35)));
-                    print!("    \x1b[38;2;255;184;108m{}\x1b[0m\r\n", top_bar);
-                    print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mFull CID:\x1b[0m \x1b[38;2;255;121;198m{}\x1b[0m\r\n", s.cid);
-                    if let Some(ref prof) = s.profile {
-                        print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mAccount Profile:\x1b[0m \x1b[38;2;80;250;123m{}\x1b[0m\r\n", prof);
-                    }
-                    print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mDate:\x1b[0m {}  (\x1b[38;2;241;250;140m{} bytes\x1b[0m, {} lines)\r\n", s.datetime, s.size_bytes, s.line_count);
-                    print!("    \x1b[38;2;255;184;108m│\x1b[0m \x1b[1mPrompt:\x1b[0m\r\n");
-                    for p_line in s.full_prompt.lines().take(6) {
-                        print!("    \x1b[38;2;255;184;108m│\x1b[0m   {}\r\n", p_line);
-                    }
-                    let bot_bar = "└".to_string() + &"─".repeat(box_w.saturating_sub(1));
-                    print!("    \x1b[38;2;255;184;108m{}\x1b[0m\r\n", bot_bar);
-                }
+    match ans {
+        Ok(choice) => {
+            let short_id = choice.split_whitespace().next().unwrap_or("").trim();
+            if let Some(target) = sessions.iter().find(|s| s.short_id() == short_id) {
+                println!("{} Resuming Antigravity session {}...", "🚀".bold(), target.conversation_id.cyan());
+                let mut child = Command::new("agy")
+                    .args(["resume", &target.conversation_id])
+                    .spawn()?;
+                let _ = child.wait();
             }
         }
-
-        let _ = out.flush();
-
-        if let Ok(Event::Key(key_event)) = event::read() {
-            match key_event.code {
-                KeyCode::Esc => break None,
-                KeyCode::Char('q') if key_event.modifiers.contains(KeyModifiers::CONTROL) => break None,
-                KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => break None,
-                KeyCode::Enter => {
-                    if !filtered.is_empty() {
-                        break Some(filtered[selected_idx].clone());
-                    }
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if selected_idx > 0 {
-                        selected_idx -= 1;
-                    }
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if !filtered.is_empty() && selected_idx + 1 < filtered.len() {
-                        selected_idx += 1;
-                    }
-                }
-                KeyCode::Char(' ') | KeyCode::Tab | KeyCode::Char('v') => {
-                    if !filtered.is_empty() {
-                        let cur_cid = &filtered[selected_idx].cid;
-                        if expanded_cid.as_ref() == Some(cur_cid) {
-                            expanded_cid = None;
-                        } else {
-                            expanded_cid = Some(cur_cid.clone());
-                        }
-                    }
-                }
-                KeyCode::Backspace => {
-                    search_query.pop();
-                    selected_idx = 0;
-                }
-                KeyCode::Char(c) => {
-                    search_query.push(c);
-                    selected_idx = 0;
-                }
-                _ => {}
-            }
+        Err(_) => {
+            println!("Operation cancelled.");
         }
-    };
-
-    let _ = execute!(out, cursor::Show, LeaveAlternateScreen);
-    let _ = disable_raw_mode();
-
-    if let Some(selected_session) = result_session_opt {
-        if let Some(ref prof) = selected_session.profile {
-            crate::account::set_active_account(prof);
-        }
-        println!("▶ Resuming session: \x1b[38;2;139;233;253m{}\x1b[0m", selected_session.cid);
-        let _ = Command::new("agy").args(["--conversation", &selected_session.cid]).exec();
-    } else {
-        println!("Cancelled.");
     }
+
+    Ok(())
 }

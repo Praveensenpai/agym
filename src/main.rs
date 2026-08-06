@@ -2,74 +2,91 @@ mod account;
 mod quota;
 mod session;
 
-use colored::*;
-use std::env;
+use account::*;
+use anyhow::Result;
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Shell};
+use colored::Colorize;
+use session::*;
+use std::io;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+#[derive(Parser)]
+#[command(name = "agym")]
+#[command(author = "Praveensenpai")]
+#[command(version = "0.3.0")]
+#[command(about = "Unified Antigravity CLI & Account Manager", long_about = None)]
+struct Cli {
+    /// Bypass quota cache and fetch live quota from CloudCode API
+    #[arg(short = 'n', long = "no-cache", global = true)]
+    no_cache: bool,
 
-fn print_version() {
-    println!("agym v{}", VERSION);
+    #[command(subcommand)]
+    command: Option<Commands>,
 }
 
-fn print_help() {
-    println!("{} v{} - Unified Antigravity CLI Manager", "agym".purple().bold(), VERSION);
-    println!("\n{}", "Usage:".bold());
-    println!("  agym [command] [options]");
-    println!("\n{}", "Commands:".bold());
-    println!("  (no args), sessions, s    Interactive fzf session picker");
-    println!("  accounts, acc, a          Interactive fzf account switcher");
-    println!("  switch <email>            Switch active account by email/query");
-    println!("  stats, status, q          Show account quota & model reset times");
-    println!("    --verbose               Show all model quotas");
-    println!("  list                      List all saved accounts");
-    println!("  save                      Save active token from keyring");
-    println!("  version, -v, --version    Show agym version");
-    println!("  help, -h, --help          Show this help message");
+#[derive(Subcommand)]
+enum Commands {
+    /// Switch to an Antigravity account interactively or by email/query
+    #[command(alias = "acc")]
+    Switch {
+        /// Account email or query to switch to
+        account: Option<String>,
+    },
+    /// Save active token from keyring as a saved account profile
+    Save,
+    /// Back up active account and prepare a fresh session to log in to a new account
+    #[command(alias = "add")]
+    New,
+    /// Pick and resume a previous Antigravity chat session
+    #[command(alias = "s")]
+    Sessions,
+    /// List all saved Antigravity accounts with model quota
+    List {
+        /// Bypass quota cache and fetch live quota from CloudCode API
+        #[arg(short = 'n', long = "no-cache")]
+        no_cache: bool,
+    },
+    /// Remove a saved Antigravity account
+    Remove {
+        /// Account email to remove
+        account: String,
+    },
+    /// Generate shell autocompletion scripts (bash, zsh, fish, powershell, elvish)
+    Completions {
+        /// Target shell for autocompletions
+        shell: Shell,
+    },
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
+fn main() -> Result<()> {
+    let cli = Cli::parse();
 
-    if args.len() < 2 {
-        session::pick_session();
-        return;
-    }
-
-    let cmd = args[1].to_lowercase();
-
-    match cmd.as_str() {
-        "sessions" | "session" | "s" | "ls" => {
-            session::pick_session();
-        }
-        "accounts" | "account" | "acc" | "sw" | "switch" | "use" | "a" => {
-            if args.len() > 2 {
-                account::set_active_account(&args[2]);
+    match cli.command {
+        Some(Commands::Switch { account }) => match account {
+            Some(name) => {
+                set_active_account(&name);
+            }
+            None => {
+                interactive_switch(cli.no_cache)?;
+            }
+        },
+        Some(Commands::Save) => {
+            if let Some(email) = save_current_account() {
+                println!("{} Saved current Antigravity account as '{}'", "✔".green().bold(), email.bold().cyan());
             } else {
-                account::interactive_switch();
+                println!("{}", "✘ No active token found in keyring to save.".red());
             }
         }
-        "stats" | "status" | "quota" | "info" | "q" => {
-            let verbose = args.iter().any(|a| a == "--verbose");
-            quota::show_stats(verbose);
+        Some(Commands::New) => prepare_new_session()?,
+        Some(Commands::Sessions) => pick_and_resume_session()?,
+        Some(Commands::List { no_cache }) => list_all_accounts(cli.no_cache || no_cache)?,
+        Some(Commands::Remove { account }) => remove_account(&account)?,
+        Some(Commands::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            generate(shell, &mut cmd, "agym", &mut io::stdout());
         }
-        "list" => {
-            account::list_accounts();
-        }
-        "save" => {
-            if let Some(email) = account::save_current_account() {
-                println!("Saved account: {}", email.cyan());
-            } else {
-                println!("{}", "No active account token found to save.".red());
-            }
-        }
-        "version" | "-v" | "--version" | "-version" => {
-            print_version();
-        }
-        "help" | "-h" | "--help" => {
-            print_help();
-        }
-        _ => {
-            account::set_active_account(&args[1]);
-        }
+        None => interactive_switch(cli.no_cache)?,
     }
+
+    Ok(())
 }

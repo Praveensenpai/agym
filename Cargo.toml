@@ -1,19 +1,19 @@
 [package]
 name = "agym"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "Unified Antigravity CLI Session & Account Manager"
+description = "Unified Antigravity CLI & Account Manager"
 
 [dependencies]
+anyhow = "1.0"
 base64 = "0.22"
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
 colored = "3.0"
-crossterm = "0.27"
+dirs = "5.0"
 inquire = "0.7.5"
-regex = "1.10"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-walkdir = "2.5"

@@ -1,61 +1,127 @@
-# 🚀 agym
+# agym (Antigravity Manager)
 
-Unified session picker, account switcher, and model quota manager for the **Antigravity CLI** (`agy`).
+> Ultra-fast Antigravity CLI Account Manager & Switcher written in Rust.
 
----
-
-## ✨ Features
-
-- 🔍 **Interactive Session Picker**: Search and instantly resume past Antigravity AI sessions using `fzf`.
-- 👤 **Account Switcher**: Fast switching between multiple saved Antigravity AI accounts.
-- 📊 **Quota & Model Stats**: Live visual progress bars and reset countdowns for Gemini, Claude, and GPT models.
+`agym` allows you to switch between multiple Antigravity accounts instantly without logging out.
 
 ---
 
-## 📦 Installation
+## ⚡ Features
 
-> ℹ️ **Note**: AUR submission (`yay -S agym-git`) is currently pending due to temporary AUR maintenance. Please use the one-liner installer below in the meantime.
+* 🚀 **Instant Account Switching**: Switch Antigravity accounts in <10ms without logging out.
+* 🔑 **Automatic JWT Parsing**: Decodes account email dynamically from your Antigravity token.
+* 📊 **Live Model Quota Display**: Shows CloudCode model quota next to accounts.
+* ⚡ **Smart 5-Minute Quota Cache**: Caches usage metrics locally in `~/.gemini-accounts/.quota_cache.json` for instant UI execution.
+* 🔄 **Cache Bypass**: Supports `--no-cache` (`-n`) to force refreshing live quota on demand.
+* ➕ **Seamless New Session Flow**: Backs up your active session so you can log into a new account with zero setup.
+* 🎯 **Interactive TUI Selector**: Select saved accounts with arrow keys using `inquire`.
+* 🛠️ **CLI Subcommands**: Full CLI support for scripting (`agym switch`, `agym new`, `agym save`, `agym list`, `agym remove`).
+* 🐚 **Shell Autocompletions**: Native autocompletion support for `bash`, `zsh`, and `fish`.
+* 📦 **Single Standalone Binary**: Zero runtime dependencies.
 
-### Quick One-Liner
+---
+
+## 📥 Installation
+
+### Quick One-Liner (Pre-compiled Binary)
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/Praveensenpai/agym/main/install.sh | bash
+curl -sSL -H "Accept: application/vnd.github.v3.raw" https://api.github.com/repos/Praveensenpai/agym/contents/install.sh | bash
 ```
 
-### 🛠️ Build from Source (Cargo)
-
-Prerequisites: [Rust & Cargo](https://rustup.rs/)
+### Build from Source
 
 ```bash
 git clone https://github.com/Praveensenpai/agym.git
 cd agym
-cargo build --release
-cp target/release/agym ~/.local/bin/
+chmod +x install.sh
+./install.sh
 ```
 
 ---
 
-## ⚡ Usage
+## ⚡ Shell Autocompletions Setup
+
+`install.sh` automatically installs completions for `bash`, `zsh`, and `fish`.
+
+If installing manually from source or via `cargo install`, generate completions for your shell:
+
+### Bash
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+agym completions bash > ~/.local/share/bash-completion/completions/agym
+```
+
+### Zsh
+```bash
+mkdir -p ~/.zsh/completion
+agym completions zsh > ~/.zsh/completion/_agym
+```
+
+### Fish
+```bash
+mkdir -p ~/.config/fish/completions
+agym completions fish > ~/.config/fish/completions/agym.fish
+```
+
+---
+
+## 🚀 Usage
+
+### 1. Interactive Switcher (Default)
+Run `agym` with no arguments to open the interactive selection menu:
 
 ```bash
-# Launch interactive session picker (fzf)
 agym
+```
 
-# Launch interactive account switcher (fzf)
-agym accounts
+### 2. Bypass Quota Cache
+Force fetching fresh live quota directly from CloudCode API:
 
-# View model quotas & reset timers
-agym stats
+```bash
+agym --no-cache
+# or
+agym list --no-cache
+```
 
-# View verbose quota details for all internal models
-agym stats -v
+### 3. Log in to a New Account
+Back up your current session and prepare a fresh session to log into a new account:
 
-# Switch to account directly by name/email
-agym switch account@example.com
+```bash
+agym new # (or agym add)
+```
+Then log in via `agy`, and run `agym save` (or `agym`) when finished to auto-detect and save your new account!
+
+### 4. Save Current Account Session
+Save your currently active Antigravity login session:
+
+```bash
+agym save
+```
+
+### 5. Switch Account
+Switch to a saved account directly by name or email:
+
+```bash
+agym switch user@gmail.com
+```
+
+### 6. List Accounts
+List all saved account profiles:
+
+```bash
+agym list
+```
+
+### 7. Remove Account
+Delete a saved account profile:
+
+```bash
+agym remove user@gmail.com
 ```
 
 ---
 
 ## 📜 License
 
-MIT
+MIT © [Praveensenpai](https://github.com/Praveensenpai)
