@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Local};
+use colored::*;
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyModifiers},
@@ -13,7 +14,6 @@ use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use walkdir::WalkDir;
-use colored::*;
 
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
@@ -39,23 +39,53 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
-pub fn sanitize_prompt(raw: &str) -> String {
-    let stripped = raw.replace("<USER_REQUEST>", "").replace("</USER_REQUEST>", "");
-    let cleaned = stripped
+pub fn clean_user_text(raw: &str) -> String {
+    let mut s = raw.to_string();
+    let tags = [
+        "<USER_REQUEST>",
+        "</USER_REQUEST>",
+        "<USER_SETTINGS_CHANGE>",
+        "</USER_SETTINGS_CHANGE>",
+        "<ADDITIONAL_METADATA>",
+        "</ADDITIONAL_METADATA>",
+        "<EPHEMERAL_MESSAGE>",
+        "</EPHEMERAL_MESSAGE>",
+    ];
+    for tag in tags {
+        s = s.replace(tag, "");
+    }
+
+    let cleaned = s
         .lines()
         .map(|l| l.trim())
         .filter(|l| {
             !l.is_empty()
-                && !l.starts_with("<ADDITIONAL_METADATA>")
-                && !l.starts_with("</ADDITIONAL_METADATA>")
-                && !l.starts_with("<USER_SETTINGS_CHANGE>")
+                && !l.starts_with('<')
                 && !l.starts_with("The current local time is:")
                 && !l.starts_with("The user changed setting")
+                && !l.starts_with("The user has uploaded")
+                && !l.starts_with("┌─")
+                && !l.starts_with("└─")
+                && !l.starts_with('│')
+                && !l.starts_with("~ ❯")
+                && !l.starts_with("~ ✗")
         })
+        .collect::<Vec<&str>>()
+        .join("\n");
+
+    cleaned.trim().to_string()
+}
+
+pub fn sanitize_summary(raw: &str) -> String {
+    let cleaned = clean_user_text(raw);
+    let single_line = cleaned
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
         .collect::<Vec<&str>>()
         .join(" ");
 
-    let trimmed = cleaned.trim();
+    let trimmed = single_line.trim();
     if trimmed.is_empty() {
         "New Conversation".to_string()
     } else {
@@ -118,15 +148,15 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
                 };
 
                 let line_count = content.lines().count();
-                let mut full_prompt = "New Conversation".to_string();
+                let mut raw_prompt = "New Conversation".to_string();
 
                 for line in content.lines() {
                     if line.contains("\"USER_INPUT\"") || line.contains("\"type\":\"USER_INPUT\"") {
                         if let Ok(json) = serde_json::from_str::<Value>(line) {
                             if let Some(text) = json.get("content").and_then(|c| c.as_str()) {
-                                let sanitized = sanitize_prompt(text);
-                                if sanitized != "New Conversation" {
-                                    full_prompt = text.to_string();
+                                let summary_candidate = sanitize_summary(text);
+                                if summary_candidate != "New Conversation" {
+                                    raw_prompt = text.to_string();
                                     break;
                                 }
                             }
@@ -134,7 +164,8 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
                     }
                 }
 
-                let summary = sanitize_prompt(&full_prompt);
+                let full_prompt = clean_user_text(&raw_prompt);
+                let summary = sanitize_summary(&raw_prompt);
 
                 let cid = path
                     .ancestors()
@@ -167,7 +198,7 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
                     size_fmt,
                     line_count,
                     summary,
-                    full_prompt,
+                    full_prompt: if full_prompt.is_empty() { "New Conversation".to_string() } else { full_prompt },
                     profile: prof_name.clone(),
                 };
 

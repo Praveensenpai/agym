@@ -10,6 +10,7 @@ mkdir -p "$INSTALL_DIR"
 if [ -f "Cargo.toml" ]; then
     echo "Building $BINARY_NAME from local source..."
     cargo build --release
+    rm -f "$INSTALL_DIR/$BINARY_NAME" 2>/dev/null || true
     cp target/release/"$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
 else
     echo "Installing $BINARY_NAME..."
