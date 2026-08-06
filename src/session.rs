@@ -96,8 +96,13 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
                 if path.is_dir() {
-                    let prof_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    search_roots.push((path.join("antigravity-cli/brain"), Some(prof_name.clone())));
+                    let prof_name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    search_roots
+                        .push((path.join("antigravity-cli/brain"), Some(prof_name.clone())));
                     search_roots.push((path.join("gemini/antigravity-cli/brain"), Some(prof_name)));
                 }
             }
@@ -111,7 +116,11 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
             continue;
         }
 
-        for entry in WalkDir::new(&root).max_depth(20).into_iter().filter_map(|e| e.ok()) {
+        for entry in WalkDir::new(&root)
+            .max_depth(20)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             let path = entry.path();
             if path.file_name() == Some(std::ffi::OsStr::new("transcript.jsonl")) {
                 let meta = match path.metadata() {
@@ -188,7 +197,11 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
                     size_fmt,
                     line_count,
                     summary,
-                    full_prompt: if full_prompt.is_empty() { "New Conversation".to_string() } else { full_prompt },
+                    full_prompt: if full_prompt.is_empty() {
+                        "New Conversation".to_string()
+                    } else {
+                        full_prompt
+                    },
                     profile: prof_name.clone(),
                 };
 
@@ -204,5 +217,3 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
     sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     sessions
 }
-
-

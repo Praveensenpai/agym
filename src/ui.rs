@@ -1,5 +1,6 @@
 use crate::account::{
-    interactive_remove_account, list_account_infos, prepare_new_session, set_active_account,
+    interactive_remove_account, list_account_infos, list_account_infos_cached, prepare_new_session,
+    set_active_account,
 };
 use crate::session::scan_sessions;
 use anyhow::Result;
@@ -46,17 +47,28 @@ pub fn run_accounts_tui() -> Result<()> {
     let mut state = TableState::default();
     let mut filter = String::new();
     let mut searching = false;
-    let mut is_refreshing = false;
+    let mut is_refreshing = true;
     let mut last_refresh_time: Option<Instant> = None;
     let mut cooldown_msg: Option<(String, Instant)> = None;
 
-    let mut accounts = list_account_infos(false);
+    let mut accounts = list_account_infos_cached();
 
-    let (tx, rx): (Sender<Vec<crate::account::AccountInfo>>, Receiver<Vec<crate::account::AccountInfo>>) = channel();
+    let (tx, rx): (
+        Sender<Vec<crate::account::AccountInfo>>,
+        Receiver<Vec<crate::account::AccountInfo>>,
+    ) = channel();
 
     if !accounts.is_empty() {
         state.select(Some(0));
     }
+
+    // Draw the cached account list first; live quota requests can take several
+    // seconds and must not delay the first frame of the TUI.
+    let initial_tx = tx.clone();
+    std::thread::spawn(move || {
+        let fresh = list_account_infos(true);
+        let _ = initial_tx.send(fresh);
+    });
 
     let res = loop {
         if let Ok(fresh_accounts) = rx.try_recv() {
@@ -71,9 +83,7 @@ pub fn run_accounts_tui() -> Result<()> {
             .iter()
             .enumerate()
             .filter_map(|(idx, acc)| {
-                if filter.is_empty()
-                    || acc.email.to_lowercase().contains(&filter.to_lowercase())
-                {
+                if filter.is_empty() || acc.email.to_lowercase().contains(&filter.to_lowercase()) {
                     Some(idx)
                 } else {
                     None
@@ -207,7 +217,9 @@ pub fn run_accounts_tui() -> Result<()> {
                 } else {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break Ok(()),
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            break Ok(())
+                        }
                         KeyCode::Char('/') => {
                             searching = true;
                         }
@@ -480,7 +492,9 @@ pub fn run_sessions_tui() -> Result<()> {
                 } else {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break Ok(()),
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            break Ok(())
+                        }
                         KeyCode::Char('/') => {
                             searching = true;
                         }

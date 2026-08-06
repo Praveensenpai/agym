@@ -14,7 +14,7 @@ use std::io;
 #[derive(Parser)]
 #[command(name = "agym")]
 #[command(author = "Praveensenpai")]
-#[command(version = "0.6.8")]
+#[command(version = "0.6.9")]
 #[command(about = "Unified Antigravity CLI & Account Manager", long_about = None)]
 struct Cli {
     /// Account email or query to switch to directly
@@ -46,7 +46,11 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Save) => {
             if let Some(email) = save_current_account() {
-                println!("{} Saved current Antigravity account as '{}'", "✔".green().bold(), email.bold().cyan());
+                println!(
+                    "{} Saved current Antigravity account as '{}'",
+                    "✔".green().bold(),
+                    email.bold().cyan()
+                );
             } else {
                 println!("{}", "✘ No active token found in keyring to save.".red());
             }

@@ -9,8 +9,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn get_oauth_creds() -> (String, String) {
-    let cid_enc: &[u8] = &[100, 101, 98, 100, 101, 101, 99, 101, 99, 101, 96, 108, 100, 120, 33, 56, 61, 38, 38, 60, 59, 103, 61, 103, 100, 57, 54, 39, 48, 103, 102, 96, 35, 33, 58, 57, 58, 63, 61, 97, 50, 97, 101, 102, 48, 37, 123, 52, 37, 37, 38, 123, 50, 58, 58, 50, 57, 48, 32, 38, 48, 39, 54, 58, 59, 33, 48, 59, 33, 123, 54, 58, 56];
-    let sec_enc: &[u8] = &[18, 26, 22, 6, 5, 13, 120, 30, 96, 109, 19, 2, 7, 97, 109, 99, 25, 49, 25, 31, 100, 56, 25, 23, 109, 38, 13, 22, 97, 47, 99, 36, 17, 20, 51];
+    let cid_enc: &[u8] = &[
+        100, 101, 98, 100, 101, 101, 99, 101, 99, 101, 96, 108, 100, 120, 33, 56, 61, 38, 38, 60,
+        59, 103, 61, 103, 100, 57, 54, 39, 48, 103, 102, 96, 35, 33, 58, 57, 58, 63, 61, 97, 50,
+        97, 101, 102, 48, 37, 123, 52, 37, 37, 38, 123, 50, 58, 58, 50, 57, 48, 32, 38, 48, 39, 54,
+        58, 59, 33, 48, 59, 33, 123, 54, 58, 56,
+    ];
+    let sec_enc: &[u8] = &[
+        18, 26, 22, 6, 5, 13, 120, 30, 96, 109, 19, 2, 7, 97, 109, 99, 25, 49, 25, 31, 100, 56, 25,
+        23, 109, 38, 13, 22, 97, 47, 99, 36, 17, 20, 51,
+    ];
 
     let cid_dec: Vec<u8> = cid_enc.iter().map(|b| b ^ 0x55).collect();
     let sec_dec: Vec<u8> = sec_enc.iter().map(|b| b ^ 0x55).collect();
@@ -132,14 +140,24 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
     let mut access_tok = tok_json
         .get("access_token")
         .and_then(|v| v.as_str())
-        .or_else(|| tok_json.get("token").and_then(|t| t.get("access_token")).and_then(|v| v.as_str()))
+        .or_else(|| {
+            tok_json
+                .get("token")
+                .and_then(|t| t.get("access_token"))
+                .and_then(|v| v.as_str())
+        })
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow!("No access token"))?;
 
     let refresh_tok = tok_json
         .get("refresh_token")
         .and_then(|v| v.as_str())
-        .or_else(|| tok_json.get("token").and_then(|t| t.get("refresh_token")).and_then(|v| v.as_str()))
+        .or_else(|| {
+            tok_json
+                .get("token")
+                .and_then(|t| t.get("refresh_token"))
+                .and_then(|v| v.as_str())
+        })
         .map(|s| s.to_string());
 
     let client = Client::builder().timeout(Duration::from_secs(4)).build()?;
@@ -177,7 +195,8 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
 
             if let Ok(ref_r) = ref_resp {
                 if let Ok(ref_json) = ref_r.json::<Value>() {
-                    if let Some(new_access) = ref_json.get("access_token").and_then(|v| v.as_str()) {
+                    if let Some(new_access) = ref_json.get("access_token").and_then(|v| v.as_str())
+                    {
                         access_tok = new_access.to_string();
 
                         if let Some(tok_obj) = tok_json.get_mut("token") {
@@ -208,15 +227,27 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
     }
 
     let val = res_val.ok_or_else(|| anyhow!("Failed to fetch models"))?;
-    let models = val.get("models").and_then(|m| m.as_object()).ok_or_else(|| anyhow!("No models object"))?;
+    let models = val
+        .get("models")
+        .and_then(|m| m.as_object())
+        .ok_or_else(|| anyhow!("No models object"))?;
 
     let mut gemini_percent: Option<u32> = None;
     let mut claude_percent: Option<u32> = None;
 
-    let gemini_keys = ["gemini-2.5-pro", "gemini-3.6-flash-high", "gemini-3.1-pro-low", "gemini-3.1-flash-lite"];
+    let gemini_keys = [
+        "gemini-2.5-pro",
+        "gemini-3.6-flash-high",
+        "gemini-3.1-pro-low",
+        "gemini-3.1-flash-lite",
+    ];
     for key in gemini_keys {
         if let Some(m_info) = models.get(key) {
-            if let Some(frac) = m_info.get("quotaInfo").and_then(|q| q.get("remainingFraction")).and_then(|f| f.as_f64()) {
+            if let Some(frac) = m_info
+                .get("quotaInfo")
+                .and_then(|q| q.get("remainingFraction"))
+                .and_then(|f| f.as_f64())
+            {
                 gemini_percent = Some((frac * 100.0) as u32);
                 break;
             }
@@ -225,7 +256,11 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
     if gemini_percent.is_none() {
         for (k, m_info) in models {
             if k.contains("gemini") {
-                if let Some(frac) = m_info.get("quotaInfo").and_then(|q| q.get("remainingFraction")).and_then(|f| f.as_f64()) {
+                if let Some(frac) = m_info
+                    .get("quotaInfo")
+                    .and_then(|q| q.get("remainingFraction"))
+                    .and_then(|f| f.as_f64())
+                {
                     gemini_percent = Some((frac * 100.0) as u32);
                     break;
                 }
@@ -233,10 +268,18 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
         }
     }
 
-    let claude_keys = ["claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"];
+    let claude_keys = [
+        "claude-sonnet-4-6",
+        "claude-opus-4-6-thinking",
+        "gpt-oss-120b-medium",
+    ];
     for key in claude_keys {
         if let Some(m_info) = models.get(key) {
-            if let Some(frac) = m_info.get("quotaInfo").and_then(|q| q.get("remainingFraction")).and_then(|f| f.as_f64()) {
+            if let Some(frac) = m_info
+                .get("quotaInfo")
+                .and_then(|q| q.get("remainingFraction"))
+                .and_then(|f| f.as_f64())
+            {
                 claude_percent = Some((frac * 100.0) as u32);
                 break;
             }
@@ -245,7 +288,11 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
     if claude_percent.is_none() {
         for (k, m_info) in models {
             if k.contains("claude") || k.contains("gpt") {
-                if let Some(frac) = m_info.get("quotaInfo").and_then(|q| q.get("remainingFraction")).and_then(|f| f.as_f64()) {
+                if let Some(frac) = m_info
+                    .get("quotaInfo")
+                    .and_then(|q| q.get("remainingFraction"))
+                    .and_then(|f| f.as_f64())
+                {
                     claude_percent = Some((frac * 100.0) as u32);
                     break;
                 }

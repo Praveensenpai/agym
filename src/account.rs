@@ -1,4 +1,4 @@
-use crate::quota::{fetch_quota_cached, AccountQuotaInfo};
+use crate::quota::{fetch_quota_cached, load_quota_cache, AccountQuotaInfo};
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -84,14 +84,11 @@ pub fn write_keyring_token(token_json: &str) -> bool {
 pub fn extract_email_from_token_json(token_json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(token_json).ok()?;
 
-    let id_token = v
-        .get("id_token")
-        .and_then(|t| t.as_str())
-        .or_else(|| {
-            v.get("token")
-                .and_then(|t| t.get("id_token"))
-                .and_then(|t| t.as_str())
-        })?;
+    let id_token = v.get("id_token").and_then(|t| t.as_str()).or_else(|| {
+        v.get("token")
+            .and_then(|t| t.get("id_token"))
+            .and_then(|t| t.as_str())
+    })?;
 
     let parts: Vec<&str> = id_token.split('.').collect();
     if parts.len() < 2 {
@@ -107,11 +104,16 @@ pub fn extract_email_from_token_json(token_json: &str) -> Option<String> {
         } else if rem == 3 {
             padded.push('=');
         }
-        base64::engine::general_purpose::STANDARD.decode(padded).ok()
+        base64::engine::general_purpose::STANDARD
+            .decode(padded)
+            .ok()
     })?;
 
     let payload_json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    payload_json.get("email").and_then(|e| e.as_str()).map(|s| s.to_string())
+    payload_json
+        .get("email")
+        .and_then(|e| e.as_str())
+        .map(|s| s.to_string())
 }
 
 pub fn save_current_account() -> Option<String> {
@@ -133,7 +135,10 @@ pub fn update_sqlite_db(email: &str) {
         if let Ok(conn) = Connection::open(&db_path) {
             let _ = conn.execute("UPDATE accounts SET is_active = 0", []);
             let query = format!("%{}%", email);
-            let _ = conn.execute("UPDATE accounts SET is_active = 1 WHERE email LIKE ?1", [&query]);
+            let _ = conn.execute(
+                "UPDATE accounts SET is_active = 1 WHERE email LIKE ?1",
+                [&query],
+            );
         }
     }
 }
@@ -159,10 +164,19 @@ pub fn update_gemini_profile(email: &str) {
     let _ = unix_fs::symlink(&prof_dir, &gemini_link);
 }
 
-pub fn list_account_infos(no_cache: bool) -> Vec<AccountInfo> {
-    let _ = save_current_account();
-    let current_token = get_current_keyring_token();
-    let current_email = current_token.as_deref().and_then(extract_email_from_token_json);
+fn list_account_infos_with<F>(mut quota_for: F, detect_active: bool) -> Vec<AccountInfo>
+where
+    F: FnMut(&str, &PathBuf) -> Option<AccountQuotaInfo>,
+{
+    let current_email = if detect_active {
+        let _ = save_current_account();
+        let current_token = get_current_keyring_token();
+        current_token
+            .as_deref()
+            .and_then(extract_email_from_token_json)
+    } else {
+        None
+    };
 
     let acc_dir = get_accounts_dir();
     let mut accounts = Vec::new();
@@ -176,7 +190,7 @@ pub fn list_account_infos(no_cache: bool) -> Vec<AccountInfo> {
                         continue;
                     }
                     let is_active = Some(stem) == current_email.as_deref();
-                    let quota = fetch_quota_cached(stem, &path, no_cache).ok();
+                    let quota = quota_for(stem, &path);
                     accounts.push(AccountInfo {
                         email: stem.to_string(),
                         is_active,
@@ -191,16 +205,40 @@ pub fn list_account_infos(no_cache: bool) -> Vec<AccountInfo> {
         let pct_a = a
             .quota
             .as_ref()
-            .map(|q| q.gemini_percent.unwrap_or(0).max(q.claude_percent.unwrap_or(0)))
+            .map(|q| {
+                q.gemini_percent
+                    .unwrap_or(0)
+                    .max(q.claude_percent.unwrap_or(0))
+            })
             .unwrap_or(0);
         let pct_b = b
             .quota
             .as_ref()
-            .map(|q| q.gemini_percent.unwrap_or(0).max(q.claude_percent.unwrap_or(0)))
+            .map(|q| {
+                q.gemini_percent
+                    .unwrap_or(0)
+                    .max(q.claude_percent.unwrap_or(0))
+            })
             .unwrap_or(0);
         pct_b.cmp(&pct_a).then_with(|| a.email.cmp(&b.email))
     });
     accounts
+}
+
+pub fn list_account_infos(no_cache: bool) -> Vec<AccountInfo> {
+    list_account_infos_with(
+        |stem, path| fetch_quota_cached(stem, path, no_cache).ok(),
+        true,
+    )
+}
+
+/// Load only non-expired quota data from disk so the TUI can render immediately.
+pub fn list_account_infos_cached() -> Vec<AccountInfo> {
+    let cache = load_quota_cache();
+    list_account_infos_with(
+        |stem, _| cache.get(stem).filter(|quota| !quota.is_expired()).cloned(),
+        false,
+    )
 }
 
 pub fn set_active_account(target: &str) {
@@ -208,12 +246,17 @@ pub fn set_active_account(target: &str) {
     let accounts = list_account_infos(false);
 
     let target_lc = target.to_lowercase();
-    let matching = accounts.iter().find(|acc| acc.email.to_lowercase().contains(&target_lc));
+    let matching = accounts
+        .iter()
+        .find(|acc| acc.email.to_lowercase().contains(&target_lc));
 
     let target_acc = match matching {
         Some(m) => m,
         None => {
-            println!("{}", format!("Error: Account matching '{}' not found.", target).red());
+            println!(
+                "{}",
+                format!("Error: Account matching '{}' not found.", target).red()
+            );
             list_all_accounts(false).ok();
             std::process::exit(1);
         }
@@ -222,7 +265,10 @@ pub fn set_active_account(target: &str) {
     let token_json = match fs::read_to_string(&target_acc.file_path) {
         Ok(t) => t,
         Err(_) => {
-            println!("{}", format!("Error: Failed to read token file for {}", target_acc.email).red());
+            println!(
+                "{}",
+                format!("Error: Failed to read token file for {}", target_acc.email).red()
+            );
             std::process::exit(1);
         }
     };
@@ -230,9 +276,16 @@ pub fn set_active_account(target: &str) {
     if write_keyring_token(&token_json) {
         update_sqlite_db(&target_acc.email);
         update_gemini_profile(&target_acc.email);
-        println!("{} {}", "✔ Switched active AGY account to:".green().bold(), target_acc.email.bold().cyan());
+        println!(
+            "{} {}",
+            "✔ Switched active AGY account to:".green().bold(),
+            target_acc.email.bold().cyan()
+        );
     } else {
-        println!("{}", format!("Error: Failed to update keyring for {}", target_acc.email).red());
+        println!(
+            "{}",
+            format!("Error: Failed to update keyring for {}", target_acc.email).red()
+        );
     }
 }
 
@@ -245,7 +298,11 @@ pub fn remove_account(account_name: &str) -> Result<()> {
     }
 
     fs::remove_file(&target_path)?;
-    println!("{} Removed account: {}", "✔".green().bold(), account_name.bold().yellow());
+    println!(
+        "{} Removed account: {}",
+        "✔".green().bold(),
+        account_name.bold().yellow()
+    );
     Ok(())
 }
 
@@ -279,15 +336,25 @@ pub fn prepare_new_session() -> Result<()> {
         .output();
 
     println!("{} Prepared fresh login session.", "✨".bold());
-    println!("👉 Run {} to log in to your new account.", "agy".bold().yellow());
-    println!("👉 Run {} (or {}) when done to save it!", "agym save".bold().cyan(), "agym".bold().cyan());
+    println!(
+        "👉 Run {} to log in to your new account.",
+        "agy".bold().yellow()
+    );
+    println!(
+        "👉 Run {} (or {}) when done to save it!",
+        "agym save".bold().cyan(),
+        "agym".bold().cyan()
+    );
 
     Ok(())
 }
 
 pub fn list_all_accounts(no_cache: bool) -> Result<()> {
     if no_cache {
-        println!("{}", "⏳ Fetching live account quotas from CloudCode API...".yellow());
+        println!(
+            "{}",
+            "⏳ Fetching live account quotas from CloudCode API...".yellow()
+        );
     }
 
     let accounts = list_account_infos(no_cache);
