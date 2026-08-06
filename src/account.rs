@@ -187,7 +187,19 @@ pub fn list_account_infos(no_cache: bool) -> Vec<AccountInfo> {
             }
         }
     }
-    accounts.sort_by(|a, b| a.email.cmp(&b.email));
+    accounts.sort_by(|a, b| {
+        let pct_a = a
+            .quota
+            .as_ref()
+            .map(|q| q.gemini_percent.unwrap_or(0).max(q.claude_percent.unwrap_or(0)))
+            .unwrap_or(0);
+        let pct_b = b
+            .quota
+            .as_ref()
+            .map(|q| q.gemini_percent.unwrap_or(0).max(q.claude_percent.unwrap_or(0)))
+            .unwrap_or(0);
+        pct_b.cmp(&pct_a).then_with(|| a.email.cmp(&b.email))
+    });
     accounts
 }
 
