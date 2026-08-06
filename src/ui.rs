@@ -17,7 +17,7 @@ use ratatui::{
 };
 use std::io;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub fn style_header() -> Style {
     Style::default()
@@ -47,6 +47,9 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
     let mut filter = String::new();
     let mut searching = false;
     let mut is_refreshing = false;
+    let mut last_refresh_time: Option<Instant> = None;
+    let mut cooldown_msg: Option<(String, Instant)> = None;
+
     let mut accounts = list_account_infos(no_cache);
 
     let (tx, rx): (Sender<Vec<crate::account::AccountInfo>>, Receiver<Vec<crate::account::AccountInfo>>) = channel();
@@ -143,7 +146,21 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
 
             f.render_stateful_widget(table, chunks[1], &mut state);
 
-            let (status_text, footer_style) = if is_refreshing {
+            let mut custom_status: Option<(String, Style)> = None;
+            if let Some((ref msg, show_until)) = cooldown_msg {
+                if Instant::now() < show_until {
+                    custom_status = Some((
+                        msg.clone(),
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    ));
+                } else {
+                    cooldown_msg = None;
+                }
+            }
+
+            let (status_text, footer_style) = if let Some((msg, style)) = custom_status {
+                (msg, style)
+            } else if is_refreshing {
                 (
                     " ⏳ Fetching live account quotas in background... Navigate freely with [↑/↓]".to_string(),
                     Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
@@ -195,9 +212,34 @@ pub fn run_accounts_tui(mut no_cache: bool) -> Result<()> {
                             searching = true;
                         }
                         KeyCode::Char('r') => {
-                            if !is_refreshing {
+                            let now = Instant::now();
+                            if is_refreshing {
+                                cooldown_msg = Some((
+                                    " ⏳ Refresh is already running in background...".to_string(),
+                                    now + Duration::from_secs(3),
+                                ));
+                            } else if let Some(last_time) = last_refresh_time {
+                                let elapsed = last_time.elapsed();
+                                if elapsed < Duration::from_secs(15) {
+                                    let remaining = 15 - elapsed.as_secs();
+                                    cooldown_msg = Some((
+                                        format!(" ⏳ Refresh on 15s cooldown. Please wait {}s before refreshing again.", remaining),
+                                        now + Duration::from_secs(3),
+                                    ));
+                                } else {
+                                    no_cache = true;
+                                    is_refreshing = true;
+                                    last_refresh_time = Some(now);
+                                    let tx_clone = tx.clone();
+                                    std::thread::spawn(move || {
+                                        let fresh = list_account_infos(true);
+                                        let _ = tx_clone.send(fresh);
+                                    });
+                                }
+                            } else {
                                 no_cache = true;
                                 is_refreshing = true;
+                                last_refresh_time = Some(now);
                                 let tx_clone = tx.clone();
                                 std::thread::spawn(move || {
                                     let fresh = list_account_infos(true);
