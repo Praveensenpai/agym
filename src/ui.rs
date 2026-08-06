@@ -63,12 +63,12 @@ pub fn run_accounts_tui() -> Result<()> {
     }
 
     // Load cache and live quotas away from the UI thread. The cache result is
-    // displayed first, followed by the live result.
+    // displayed first; a live fetch only happens if the cache is expired (>5 min).
     let initial_tx = tx.clone();
     std::thread::spawn(move || {
         let cached = list_account_infos_cached();
         let _ = initial_tx.send((cached, false));
-        let fresh = list_account_infos(true);
+        let fresh = list_account_infos(false); // false = respect 5-min TTL
         let _ = initial_tx.send((fresh, true));
     });
 
