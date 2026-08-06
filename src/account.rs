@@ -84,34 +84,62 @@ pub fn write_keyring_token(token_json: &str) -> bool {
 pub fn extract_email_from_token_json(token_json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(token_json).ok()?;
 
+    // Try id_token JWT path first (old agy format)
     let id_token = v.get("id_token").and_then(|t| t.as_str()).or_else(|| {
         v.get("token")
             .and_then(|t| t.get("id_token"))
             .and_then(|t| t.as_str())
-    })?;
+    });
 
-    let parts: Vec<&str> = id_token.split('.').collect();
-    if parts.len() < 2 {
+    if let Some(id_token) = id_token {
+        let parts: Vec<&str> = id_token.split('.').collect();
+        if parts.len() >= 2 {
+            let payload_b64 = parts[1];
+            let decoded = URL_SAFE_NO_PAD.decode(payload_b64).ok().or_else(|| {
+                let mut padded = payload_b64.to_string();
+                let rem = padded.len() % 4;
+                if rem == 2 {
+                    padded.push_str("==");
+                } else if rem == 3 {
+                    padded.push('=');
+                }
+                base64::engine::general_purpose::STANDARD
+                    .decode(padded)
+                    .ok()
+            });
+
+            if let Some(bytes) = decoded {
+                if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                    if let Some(email) = payload.get("email").and_then(|e| e.as_str()) {
+                        return Some(email.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: new agy token format has no id_token — resolve email via Google tokeninfo API
+    let access_token = v
+        .get("access_token")
+        .and_then(|t| t.as_str())
+        .or_else(|| {
+            v.get("token")
+                .and_then(|t| t.get("access_token"))
+                .and_then(|t| t.as_str())
+        })?;
+
+    let url = format!(
+        "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token={}",
+        access_token
+    );
+
+    let resp = reqwest::blocking::get(&url).ok()?;
+    if !resp.status().is_success() {
         return None;
     }
 
-    let payload_b64 = parts[1];
-    let decoded = URL_SAFE_NO_PAD.decode(payload_b64).ok().or_else(|| {
-        let mut padded = payload_b64.to_string();
-        let rem = padded.len() % 4;
-        if rem == 2 {
-            padded.push_str("==");
-        } else if rem == 3 {
-            padded.push('=');
-        }
-        base64::engine::general_purpose::STANDARD
-            .decode(padded)
-            .ok()
-    })?;
-
-    let payload_json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
-    payload_json
-        .get("email")
+    let info: serde_json::Value = resp.json().ok()?;
+    info.get("email")
         .and_then(|e| e.as_str())
         .map(|s| s.to_string())
 }
