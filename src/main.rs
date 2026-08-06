@@ -32,15 +32,6 @@ struct Cli {
 enum Commands {
     /// Save active token from keyring as a saved account profile
     Save,
-    /// Back up active account and prepare a fresh session to log in to a new account
-    #[command(alias = "add")]
-    New,
-    /// List all saved Antigravity accounts with model quota
-    List {
-        /// Bypass quota cache and fetch live quota from CloudCode API
-        #[arg(short = 'n', long = "no-cache")]
-        no_cache: bool,
-    },
     /// Generate shell autocompletion scripts (bash, zsh, fish, powershell, elvish)
     Completions {
         /// Target shell for autocompletions
@@ -64,8 +55,6 @@ fn main() -> Result<()> {
                 println!("{}", "✘ No active token found in keyring to save.".red());
             }
         }
-        Some(Commands::New) => prepare_new_session()?,
-        Some(Commands::List { no_cache }) => list_all_accounts(cli.no_cache || no_cache)?,
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();
             generate(shell, &mut cmd, "agym", &mut io::stdout());
