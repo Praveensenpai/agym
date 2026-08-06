@@ -1,6 +1,4 @@
 use anyhow::{anyhow, Result};
-use base64::engine::general_purpose::STANDARD as BASE64;
-use base64::Engine;
 use chrono::{DateTime, Local};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
