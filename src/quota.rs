@@ -287,6 +287,11 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
         }
     }
 
+    let has_claude_support = models.keys().any(|k| k.contains("claude") || k.contains("gpt"))
+        || val.get("tieredModelIds")
+            .and_then(|t| t.get("pro"))
+            .map_or(false, |arr| arr.as_array().map_or(false, |a| !a.is_empty()));
+
     let claude_keys = [
         "claude-sonnet-4-6",
         "claude-opus-4-6-thinking",
@@ -294,37 +299,50 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
     ];
     for key in claude_keys {
         if let Some(m_info) = models.get(key) {
-            if let Some(frac) = m_info
+            let frac = m_info
                 .get("quotaInfo")
                 .and_then(|q| q.get("remainingFraction"))
                 .and_then(|f| f.as_f64())
-            {
+                .unwrap_or(0.0);
+            claude_percent = Some((frac * 100.0) as u32);
+            break;
+        }
+    }
+    if claude_percent.is_none() && has_claude_support {
+        for (k, m_info) in models {
+            if k.contains("claude") || k.contains("gpt") {
+                let frac = m_info
+                    .get("quotaInfo")
+                    .and_then(|q| q.get("remainingFraction"))
+                    .and_then(|f| f.as_f64())
+                    .unwrap_or(0.0);
                 claude_percent = Some((frac * 100.0) as u32);
                 break;
             }
         }
-    }
-    if claude_percent.is_none() {
-        for (k, m_info) in models {
-            if k.contains("claude") || k.contains("gpt") {
-                if let Some(frac) = m_info
-                    .get("quotaInfo")
-                    .and_then(|q| q.get("remainingFraction"))
-                    .and_then(|f| f.as_f64())
-                {
-                    claude_percent = Some((frac * 100.0) as u32);
-                    break;
-                }
-            }
+        if claude_percent.is_none() {
+            claude_percent = Some(0);
         }
     }
 
-    let plan_type = val.get("subscriptionTier")
-        .or_else(|| val.get("planType"))
-        .or_else(|| val.get("tier"))
-        .or_else(|| val.get("quotaTier"))
+    let plan_type = tok_json.get("plan_type")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(|s| s.to_string())
+        .or_else(|| {
+            val.get("subscriptionTier")
+                .or_else(|| val.get("planType"))
+                .or_else(|| val.get("tier"))
+                .or_else(|| val.get("quotaTier"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .or_else(|| {
+            if has_claude_support || claude_percent.is_some() {
+                Some("Pro".to_string())
+            } else {
+                Some("Starter".to_string())
+            }
+        });
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
