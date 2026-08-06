@@ -8,24 +8,14 @@
 
 ## ⚡ Features
 
+* 🖥️ **Interactive Ratatui TUI Dashboard**: High-performance full-screen TUI dashboard.
 * 🚀 **Instant Account Switching**: Switch Antigravity accounts in <10ms without logging out.
-* 💬 **Session Explorer**: Browse and jump directly into previous Antigravity sessions via `agy resume`.
-* 🔑 **Automatic JWT Parsing**: Decodes account email dynamically from your Antigravity token.
-* 📊 **Live Model Quota Display**: Shows CloudCode model quota next to accounts.
-* ⚡ **Smart 5-Minute Quota Cache**: Caches usage metrics locally in `~/.gemini-accounts/.quota_cache.json` for instant UI execution.
-* 🔄 **Cache Bypass**: Supports `--no-cache` (`-n`) to force refreshing live quota on demand.
-* ➕ **Seamless New Session Flow**: Backs up your active session so you can log into a new account with zero setup.
-* 🗑️ **In-Menu Account Deletion**: Safely delete unused account profiles directly from the interactive TUI menu.
-* 🖥️ **Beautiful Interactive Ratatui TUI**: High-performance full-screen TUI dashboard powered by `ratatui`.
-* 🚀 **Instant Account Switching**: Switch Antigravity accounts in <10ms without logging out.
-* 💬 **Embedded Session Explorer**: Press `[s]` or `[Tab]` inside the TUI dashboard to browse and jump directly into previous Antigravity sessions.
-* 🔑 **Automatic JWT Parsing**: Decodes account email dynamically from your Antigravity token.
-* 📊 **Live Model Quota Display**: Shows CloudCode model quota next to accounts.
-* ⚡ **Smart 5-Minute Quota Cache**: Caches usage metrics locally in `~/.gemini-accounts/.quota_cache.json` for instant UI execution.
-* 🔄 **Cache Bypass**: Supports `--no-cache` (`-n`) to force refreshing live quota on demand (`[r]` inside TUI).
-* ➕ **Seamless New Session Flow**: Backs up your active session so you can log into a new account with zero setup.
+* 💬 **Embedded Session Explorer**: Press `[s]` or `[Tab]` inside the TUI dashboard to browse and jump directly into previous Antigravity sessions (`agy resume`).
+* 📊 **Dual Model Quota Display**: Tracks both Gemini and Claude model quota pools (`[Gemini: X% | Claude: Y%]`).
+* ⚡ **Non-Blocking Background Refresh**: Press `[r]` inside TUI to fetch fresh live quota metrics asynchronously with 15s debouncing.
+* ➕ **Seamless New Session Flow**: Press `[n]` inside TUI to back up your active session and log into a new account.
 * 🗑️ **In-Menu Account Deletion**: Safely delete unused account profiles directly from the interactive TUI menu (`[d]`).
-* 🛠️ **CLI Subcommands**: Streamlined CLI support for scripting (`agym <email>`, `agym new`, `agym save`, `agym list`).
+* 🛠️ **CLI Subcommands**: Streamlined CLI support for direct account switching (`agym <email>`) and saving sessions (`agym save`).
 * 🐚 **Shell Autocompletions**: Native autocompletion support for `bash`, `zsh`, and `fish`.
 * 📦 **Single Standalone Binary**: Zero runtime dependencies.
 
@@ -92,7 +82,7 @@ agym
 - **`Space` / `v`**: Toggle session detail preview panel
 - **`n`**: Log into a new account
 - **`d`**: Delete selected account
-- **`r`**: Refresh live quota metrics (`--no-cache`)
+- **`r`**: Refresh live quota metrics (background thread, 15s debouncing)
 - **`/`**: Live search & filter
 - **`q` or `Esc`**: Quit TUI
 
@@ -103,34 +93,11 @@ Switch to a saved account directly by name or email:
 agym user@gmail.com
 ```
 
-### 3. Bypass Quota Cache
-Force fetching fresh live quota directly from CloudCode API:
-
-```bash
-agym -n
-# or
-agym list --no-cache
-```
-
-### 4. Log in to a New Account
-Back up your current session and prepare a fresh session to log into a new account:
-
-```bash
-agym new # (or agym add)
-```
-
-### 5. Save Current Account Session
+### 3. Save Current Account Session
 Save your currently active Antigravity login session:
 
 ```bash
 agym save
-```
-
-### 6. List Accounts
-List all saved account profiles with model quota and cache timestamps:
-
-```bash
-agym list
 ```
 
 ---
