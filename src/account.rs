@@ -1,4 +1,4 @@
-use crate::quota::{fetch_quota_cached, load_quota_cache, AccountQuotaInfo};
+use crate::quota::{clear_quota_cache, fetch_quota_cached, load_quota_cache, AccountQuotaInfo};
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
