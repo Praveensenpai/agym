@@ -48,24 +48,13 @@ pub struct AccountQuotaInfo {
 
 impl AccountQuotaInfo {
     pub fn display_badge(&self) -> String {
-        let plan_str = match &self.plan_type {
-            Some(p) if !p.is_empty() => p.clone(),
-            _ => {
-                if self.claude_percent.is_some() {
-                    "Pro".to_string()
-                } else {
-                    "Starter".to_string()
-                }
-            }
-        };
-
         match (self.gemini_percent, self.claude_percent) {
-            (Some(gem), Some(cld)) => format!("[{} | Gemini: {}% | Claude: {}%]", plan_str, gem, cld),
-            (Some(gem), None) => format!("[{} | Gemini: {}%]", plan_str, gem),
-            (None, Some(cld)) => format!("[{} | Claude: {}%]", plan_str, cld),
+            (Some(gem), Some(cld)) => format!("[Gemini: {}% | Claude: {}%]", gem, cld),
+            (Some(gem), None) => format!("[Gemini: {}%]", gem),
+            (None, Some(cld)) => format!("[Claude: {}%]", cld),
             _ => match (&self.top_model_name, self.top_model_percent) {
-                (Some(name), Some(pct)) => format!("[{} | {} {}% left]", plan_str, name, pct),
-                _ => format!("[{} | quota unavailable]", plan_str),
+                (Some(name), Some(pct)) => format!("[{} {}% left]", name, pct),
+                _ => "[quota unavailable]".to_string(),
             },
         }
     }
