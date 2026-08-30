@@ -5,18 +5,25 @@ use std::fs;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
+/// Represents summary metadata for a previously recorded conversation session.
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
+    /// Full 36-character UUID conversation ID.
     pub cid: String,
+    /// Truncated 8-character ID for compact table display.
     pub short_cid: String,
+    /// Localized human-readable timestamp string (`YYYY-MM-DD HH:MM`).
     pub datetime: String,
+    /// Unix timestamp in seconds for temporal sorting.
     pub timestamp: u64,
+    /// Transcript file size in bytes.
     pub size_bytes: u64,
-    pub size_fmt: String,
+    /// Number of lines in the transcript file.
     pub line_count: usize,
+    /// Sanitized single-line summary of the conversation's first user prompt.
     pub summary: String,
+    /// Cleaned multi-line text of the conversation's first prompt.
     pub full_prompt: String,
-    pub profile: Option<String>,
 }
 
 pub fn format_bytes(bytes: u64) -> String {
@@ -83,11 +90,12 @@ pub fn sanitize_summary(raw: &str) -> String {
     }
 }
 
+/// Scans standard Antigravity CLI and profile brain directories for session transcripts.
 pub fn scan_sessions() -> Vec<SessionInfo> {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/paisen"));
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     let mut search_roots = vec![
-        (home.join(".gemini/antigravity-cli/brain"), None),
-        (home.join(".antigravity-agent/brain"), None),
+        home.join(".gemini/antigravity-cli/brain"),
+        home.join(".antigravity-agent/brain"),
     ];
 
     let profiles_dir = home.join(".gemini-profiles");
@@ -96,14 +104,8 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
                 if path.is_dir() {
-                    let prof_name = path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    search_roots
-                        .push((path.join("antigravity-cli/brain"), Some(prof_name.clone())));
-                    search_roots.push((path.join("gemini/antigravity-cli/brain"), Some(prof_name)));
+                    search_roots.push(path.join("antigravity-cli/brain"));
+                    search_roots.push(path.join("gemini/antigravity-cli/brain"));
                 }
             }
         }
@@ -111,7 +113,7 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
 
     let mut session_map: HashMap<String, SessionInfo> = HashMap::new();
 
-    for (root, prof_name) in search_roots {
+    for root in search_roots {
         if !root.exists() {
             continue;
         }
@@ -139,7 +141,6 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
                     .unwrap_or_else(|| "Unknown".to_string());
 
                 let size_bytes = meta.len();
-                let size_fmt = format_bytes(size_bytes);
 
                 let content = match fs::read_to_string(path) {
                     Ok(c) => c,
@@ -194,7 +195,6 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
                     datetime,
                     timestamp: modified_ts,
                     size_bytes,
-                    size_fmt,
                     line_count,
                     summary,
                     full_prompt: if full_prompt.is_empty() {
@@ -202,11 +202,10 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
                     } else {
                         full_prompt
                     },
-                    profile: prof_name.clone(),
                 };
 
                 let existing = session_map.get(&cid);
-                if existing.map_or(true, |e| modified_ts > e.timestamp) {
+                if existing.is_none_or(|e| modified_ts > e.timestamp) {
                     session_map.insert(cid, item);
                 }
             }
@@ -214,6 +213,38 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
     }
 
     let mut sessions: Vec<SessionInfo> = session_map.into_values().collect();
-    sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    sessions.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
     sessions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(500), "500B");
+        assert_eq!(format_bytes(1024), "1.0KB");
+        assert_eq!(format_bytes(1536), "1.5KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.0MB");
+        assert_eq!(format_bytes(2500 * 1024), "2.4MB");
+    }
+
+    #[test]
+    fn test_clean_user_text() {
+        let raw = "<USER_REQUEST>\nFix the bug\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ninfo\n</ADDITIONAL_METADATA>";
+        let cleaned = clean_user_text(raw);
+        assert_eq!(cleaned, "Fix the bug\ninfo");
+    }
+
+    #[test]
+    fn test_sanitize_summary() {
+        let raw = "<USER_REQUEST>\n   Hello world   \nMore text\n</USER_REQUEST>";
+        assert_eq!(sanitize_summary(raw), "Hello world More text");
+        assert_eq!(sanitize_summary(""), "New Conversation");
+        assert_eq!(
+            sanitize_summary("<USER_REQUEST></USER_REQUEST>"),
+            "New Conversation"
+        );
+    }
 }

@@ -2,3 +2,5 @@
 /dist
 *.tar.gz
 *.zip
+.agents/
+

@@ -276,10 +276,13 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
         }
     }
 
-    let has_claude_support = models.keys().any(|k| k.contains("claude") || k.contains("gpt"))
-        || val.get("tieredModelIds")
+    let has_claude_support = models
+        .keys()
+        .any(|k| k.contains("claude") || k.contains("gpt"))
+        || val
+            .get("tieredModelIds")
             .and_then(|t| t.get("pro"))
-            .map_or(false, |arr| arr.as_array().map_or(false, |a| !a.is_empty()));
+            .is_some_and(|arr| arr.as_array().is_some_and(|a| !a.is_empty()));
 
     let claude_keys = [
         "claude-sonnet-4-6",
@@ -314,7 +317,8 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
         }
     }
 
-    let plan_type = tok_json.get("plan_type")
+    let plan_type = tok_json
+        .get("plan_type")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .or_else(|| {

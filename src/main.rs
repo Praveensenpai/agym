@@ -8,7 +8,6 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use colored::Colorize;
-use session::*;
 use std::io;
 
 #[derive(Parser)]
@@ -48,7 +47,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if let Some(target) = cli.account {
-        set_active_account(&target);
+        set_active_account(&target)?;
         return Ok(());
     }
 
