@@ -10,7 +10,7 @@
 
 * 🖥️ **Interactive Ratatui TUI Dashboard**: High-performance full-screen TUI dashboard.
 * 🚀 **Instant Account Switching**: Switch Antigravity accounts in <10ms without logging out.
-* 💬 **Embedded Session Explorer**: Press `[s]` or `[Tab]` inside the TUI dashboard to browse and jump directly into previous Antigravity sessions (`agy resume`).
+* 💬 **Embedded Session Explorer**: Press `[s]` or `[Tab]` inside the TUI dashboard to browse and jump directly into previous Antigravity sessions (`agy --conversation <CID>`).
 * 📊 **Dual Model Quota Display**: Tracks both Gemini and Claude model quota pools (`[Gemini: X% | Claude: Y%]`).
 * ⚡ **Non-Blocking Background Refresh**: Press `[r]` inside TUI to fetch fresh live quota metrics asynchronously with 15s debouncing.
 * ➕ **Seamless New Session Flow**: Press `[n]` inside TUI to back up your active session and log into a new account.

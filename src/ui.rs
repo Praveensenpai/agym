@@ -527,7 +527,7 @@ pub fn run_sessions_tui() -> Result<()> {
                                     disable_raw_mode()?;
                                     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                                     std::process::Command::new("agy")
-                                        .args(["resume", target_cid])
+                                        .args(["--conversation", target_cid])
                                         .status()?;
                                     return Ok(());
                                 }
