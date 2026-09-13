@@ -30,15 +30,25 @@ fn get_oauth_creds() -> (String, String) {
 
 const CACHE_TTL_SECONDS: u64 = 300; // 5 minutes
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountQuotaInfo {
     #[serde(default)]
     pub plan_type: Option<String>,
     #[serde(default)]
+    pub gemini_week_percent: Option<u32>,
+    #[serde(default)]
+    pub gemini_window_percent: Option<u32>,
+    #[serde(default)]
     pub gemini_percent: Option<u32>,
     #[serde(default)]
+    pub claude_week_percent: Option<u32>,
+    #[serde(default)]
+    pub claude_window_percent: Option<u32>,
+    #[serde(default)]
     pub claude_percent: Option<u32>,
+    #[serde(default)]
     pub top_model_name: Option<String>,
+    #[serde(default)]
     pub top_model_percent: Option<u32>,
     #[serde(default)]
     pub fetched_at: u64,
@@ -48,6 +58,29 @@ pub struct AccountQuotaInfo {
 
 impl AccountQuotaInfo {
     pub fn display_badge(&self) -> String {
+        let has_week = self.gemini_week_percent.is_some() || self.claude_week_percent.is_some();
+        if has_week {
+            let g = match (
+                self.gemini_week_percent,
+                self.gemini_window_percent.or(self.gemini_percent),
+            ) {
+                (Some(w), Some(h)) => format!("Gemini: {w}%(W) {h}%(5h)"),
+                (Some(w), None) => format!("Gemini: {w}%(W)"),
+                (None, Some(h)) => format!("Gemini: {h}%"),
+                (None, None) => "Gemini: —".to_string(),
+            };
+            let c = match (
+                self.claude_week_percent,
+                self.claude_window_percent.or(self.claude_percent),
+            ) {
+                (Some(w), Some(h)) => format!("Claude: {w}%(W) {h}%(5h)"),
+                (Some(w), None) => format!("Claude: {w}%(W)"),
+                (None, Some(h)) => format!("Claude: {h}%"),
+                (None, None) => "Claude: —".to_string(),
+            };
+            return format!("[{g} | {c}]");
+        }
+
         match (self.gemini_percent, self.claude_percent) {
             (Some(gem), Some(cld)) => format!("[Gemini: {}% | Claude: {}%]", gem, cld),
             (Some(gem), None) => format!("[Gemini: {}%]", gem),
@@ -89,11 +122,9 @@ pub fn load_quota_cache() -> HashMap<String, AccountQuotaInfo> {
         Some(p) => p,
         None => return HashMap::new(),
     };
-
     if !path.exists() {
         return HashMap::new();
     }
-
     fs::read_to_string(&path)
         .ok()
         .and_then(|content| serde_json::from_str(&content).ok())
@@ -123,7 +154,6 @@ pub fn fetch_quota_cached(
     no_cache: bool,
 ) -> Result<AccountQuotaInfo> {
     let mut cache = load_quota_cache();
-
     if !no_cache {
         if let Some(mut cached) = cache.get(account_key).cloned() {
             if !cached.is_expired() {
@@ -132,20 +162,17 @@ pub fn fetch_quota_cached(
             }
         }
     }
-
     let mut quota = fetch_quota_live(auth_path)?;
     quota.is_fresh = true;
     cache.insert(account_key.to_string(), quota.clone());
     save_quota_cache(&cache);
-
     Ok(quota)
 }
 
-fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
+fn read_token_data(acc_path: &Path) -> Result<(Value, String, Option<String>)> {
     let content = fs::read_to_string(acc_path)?;
-    let mut tok_json: Value = serde_json::from_str(&content)?;
-
-    let mut access_tok = tok_json
+    let tok_json: Value = serde_json::from_str(&content)?;
+    let access_tok = tok_json
         .get("access_token")
         .and_then(|v| v.as_str())
         .or_else(|| {
@@ -156,7 +183,6 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
         })
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow!("No access token"))?;
-
     let refresh_tok = tok_json
         .get("refresh_token")
         .and_then(|v| v.as_str())
@@ -167,188 +193,198 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
                 .and_then(|v| v.as_str())
         })
         .map(|s| s.to_string());
+    Ok((tok_json, access_tok, refresh_tok))
+}
 
-    let client = Client::builder().timeout(Duration::from_secs(4)).build()?;
-    let url = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
-
+fn try_refresh_token(
+    client: &Client,
+    ref_tok: &str,
+    acc_path: &Path,
+    tok_json: &mut Value,
+) -> Option<String> {
+    let ref_url = "https://oauth2.googleapis.com/token";
+    let (cid, sec) = get_oauth_creds();
     let resp = client
-        .post(url)
-        .header("Authorization", format!("Bearer {}", access_tok))
-        .header("Content-Type", "application/json")
-        .header("User-Agent", "Antigravity/1.0")
-        .json(&serde_json::json!({}))
-        .send();
+        .post(ref_url)
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", ref_tok),
+            ("client_id", cid.as_str()),
+            ("client_secret", sec.as_str()),
+        ])
+        .send()
+        .ok()?;
+    let ref_json: Value = resp.json().ok()?;
+    let new_access = ref_json.get("access_token")?.as_str()?;
+    if let Some(tok_obj) = tok_json.get_mut("token") {
+        if tok_obj.is_object() {
+            tok_obj["access_token"] = Value::String(new_access.to_string());
+        }
+    } else {
+        tok_json["access_token"] = Value::String(new_access.to_string());
+    }
+    if let Ok(new_content) = serde_json::to_string_pretty(&tok_json) {
+        let _ = fs::write(acc_path, new_content);
+    }
+    Some(new_access.to_string())
+}
 
-    let mut res_val: Option<Value> = resp.ok().and_then(|r| r.json().ok());
-
-    let has_models = res_val
-        .as_ref()
-        .and_then(|v| v.get("models"))
-        .map(|m| !m.is_null())
-        .unwrap_or(false);
-
-    if !has_models {
-        if let Some(ref_tok) = refresh_tok {
-            let ref_url = "https://oauth2.googleapis.com/token";
-            let (cid, sec) = get_oauth_creds();
-            let ref_resp = client
-                .post(ref_url)
-                .form(&[
-                    ("grant_type", "refresh_token"),
-                    ("refresh_token", ref_tok.as_str()),
-                    ("client_id", cid.as_str()),
-                    ("client_secret", sec.as_str()),
-                ])
-                .send();
-
-            if let Ok(ref_r) = ref_resp {
-                if let Ok(ref_json) = ref_r.json::<Value>() {
-                    if let Some(new_access) = ref_json.get("access_token").and_then(|v| v.as_str())
-                    {
-                        access_tok = new_access.to_string();
-
-                        if let Some(tok_obj) = tok_json.get_mut("token") {
-                            if tok_obj.is_object() {
-                                tok_obj["access_token"] = Value::String(new_access.to_string());
-                            }
-                        } else {
-                            tok_json["access_token"] = Value::String(new_access.to_string());
-                        }
-
-                        if let Ok(new_content) = serde_json::to_string_pretty(&tok_json) {
-                            let _ = fs::write(acc_path, new_content);
-                        }
-
-                        let retry_resp = client
-                            .post(url)
-                            .header("Authorization", format!("Bearer {}", access_tok))
-                            .header("Content-Type", "application/json")
-                            .header("User-Agent", "Antigravity/1.0")
-                            .json(&serde_json::json!({}))
-                            .send();
-
-                        res_val = retry_resp.ok().and_then(|r| r.json().ok());
-                    }
+fn parse_quota_summary(val: &Value, now: u64) -> Option<AccountQuotaInfo> {
+    let groups = val.get("groups")?.as_array()?;
+    let mut info = AccountQuotaInfo {
+        plan_type: Some("Pro".to_string()),
+        gemini_week_percent: None,
+        gemini_window_percent: None,
+        gemini_percent: None,
+        claude_week_percent: None,
+        claude_window_percent: None,
+        claude_percent: None,
+        top_model_name: Some("Gemini".to_string()),
+        top_model_percent: None,
+        fetched_at: now,
+        is_fresh: true,
+    };
+    for g in groups {
+        let dname = g
+            .get("displayName")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        let is_gemini = dname.contains("gemini");
+        let is_claude = dname.contains("claude") || dname.contains("gpt") || dname.contains("3p");
+        let buckets = g.get("buckets").and_then(|b| b.as_array());
+        for b in buckets.into_iter().flatten() {
+            let window = b.get("window").and_then(|w| w.as_str()).unwrap_or_default();
+            let frac = b
+                .get("remainingFraction")
+                .and_then(|f| f.as_f64())
+                .unwrap_or(0.0);
+            let pct = (frac * 100.0).round() as u32;
+            if is_gemini {
+                if window == "weekly" {
+                    info.gemini_week_percent = Some(pct);
+                } else {
+                    info.gemini_window_percent = Some(pct);
+                    info.gemini_percent = Some(pct);
+                    info.top_model_percent = Some(pct);
+                }
+            } else if is_claude {
+                if window == "weekly" {
+                    info.claude_week_percent = Some(pct);
+                } else {
+                    info.claude_window_percent = Some(pct);
+                    info.claude_percent = Some(pct);
                 }
             }
         }
     }
+    Some(info)
+}
 
-    let val = res_val.ok_or_else(|| anyhow!("Failed to fetch models"))?;
+fn parse_available_models(
+    val: &Value,
+    plan_type: Option<String>,
+    now: u64,
+) -> Result<AccountQuotaInfo> {
     let models = val
         .get("models")
         .and_then(|m| m.as_object())
-        .ok_or_else(|| anyhow!("No models object"))?;
-
+        .ok_or_else(|| anyhow!("No models in response"))?;
     let mut gemini_percent: Option<u32> = None;
-    let mut claude_percent: Option<u32> = None;
-
-    let gemini_keys = [
-        "gemini-2.5-pro",
-        "gemini-3.6-flash-high",
-        "gemini-3.1-pro-low",
-        "gemini-3.1-flash-lite",
-    ];
-    for key in gemini_keys {
-        if let Some(m_info) = models.get(key) {
-            if let Some(frac) = m_info
-                .get("quotaInfo")
-                .and_then(|q| q.get("remainingFraction"))
-                .and_then(|f| f.as_f64())
+    let gem_keys = ["gemini-2.5-pro", "gemini-3.1-pro-high", "gemini-3-flash"];
+    for key in gem_keys {
+        if let Some(m) = models.get(key) {
+            if let Some(f) = m
+                .pointer("/quotaInfo/remainingFraction")
+                .and_then(|v| v.as_f64())
             {
-                gemini_percent = Some((frac * 100.0) as u32);
+                gemini_percent = Some((f * 100.0).round() as u32);
                 break;
             }
         }
     }
-    if gemini_percent.is_none() {
-        for (k, m_info) in models {
-            if k.contains("gemini") {
-                if let Some(frac) = m_info
-                    .get("quotaInfo")
-                    .and_then(|q| q.get("remainingFraction"))
-                    .and_then(|f| f.as_f64())
-                {
-                    gemini_percent = Some((frac * 100.0) as u32);
-                    break;
-                }
-            }
-        }
-    }
-
-    let has_claude_support = models
-        .keys()
-        .any(|k| k.contains("claude") || k.contains("gpt"))
-        || val
-            .get("tieredModelIds")
-            .and_then(|t| t.get("pro"))
-            .is_some_and(|arr| arr.as_array().is_some_and(|a| !a.is_empty()));
-
-    let claude_keys = [
-        "claude-sonnet-4-6",
-        "claude-opus-4-6-thinking",
-        "gpt-oss-120b-medium",
-    ];
-    for key in claude_keys {
-        if let Some(m_info) = models.get(key) {
-            let frac = m_info
-                .get("quotaInfo")
-                .and_then(|q| q.get("remainingFraction"))
-                .and_then(|f| f.as_f64())
-                .unwrap_or(0.0);
-            claude_percent = Some((frac * 100.0) as u32);
-            break;
-        }
-    }
-    if claude_percent.is_none() && has_claude_support {
-        for (k, m_info) in models {
-            if k.contains("claude") || k.contains("gpt") {
-                let frac = m_info
-                    .get("quotaInfo")
-                    .and_then(|q| q.get("remainingFraction"))
-                    .and_then(|f| f.as_f64())
-                    .unwrap_or(0.0);
-                claude_percent = Some((frac * 100.0) as u32);
+    let mut claude_percent: Option<u32> = None;
+    let cld_keys = ["claude-sonnet-4-6", "claude-opus-4-6-thinking"];
+    for key in cld_keys {
+        if let Some(m) = models.get(key) {
+            if let Some(f) = m
+                .pointer("/quotaInfo/remainingFraction")
+                .and_then(|v| v.as_f64())
+            {
+                claude_percent = Some((f * 100.0).round() as u32);
                 break;
             }
         }
-        if claude_percent.is_none() {
-            claude_percent = Some(0);
-        }
     }
-
-    let plan_type = tok_json
-        .get("plan_type")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            val.get("subscriptionTier")
-                .or_else(|| val.get("planType"))
-                .or_else(|| val.get("tier"))
-                .or_else(|| val.get("quotaTier"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .or_else(|| {
-            if has_claude_support || claude_percent.is_some() {
-                Some("Pro".to_string())
-            } else {
-                Some("Starter".to_string())
-            }
-        });
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
     Ok(AccountQuotaInfo {
         plan_type,
+        gemini_week_percent: None,
+        gemini_window_percent: gemini_percent,
         gemini_percent,
+        claude_week_percent: None,
+        claude_window_percent: claude_percent,
         claude_percent,
         top_model_name: Some("Gemini".to_string()),
         top_model_percent: gemini_percent,
         fetched_at: now,
         is_fresh: true,
     })
+}
+
+fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
+    let (mut tok_json, mut access_tok, refresh_tok) = read_token_data(acc_path)?;
+    let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
+    let summary_url = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut resp = client
+        .post(summary_url)
+        .header("Authorization", format!("Bearer {access_tok}"))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "Antigravity/1.0")
+        .json(&serde_json::json!({}))
+        .send();
+
+    if resp.as_ref().map(|r| r.status().as_u16()).unwrap_or(0) == 401 {
+        if let Some(ref ref_tok) = refresh_tok {
+            if let Some(new_tok) = try_refresh_token(&client, ref_tok, acc_path, &mut tok_json) {
+                access_tok = new_tok;
+                resp = client
+                    .post(summary_url)
+                    .header("Authorization", format!("Bearer {access_tok}"))
+                    .header("Content-Type", "application/json")
+                    .header("User-Agent", "Antigravity/1.0")
+                    .json(&serde_json::json!({}))
+                    .send();
+            }
+        }
+    }
+
+    if let Ok(r) = resp {
+        if r.status().is_success() {
+            if let Ok(summary_val) = r.json::<Value>() {
+                if let Some(info) = parse_quota_summary(&summary_val, now) {
+                    return Ok(info);
+                }
+            }
+        }
+    }
+
+    let models_url = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+    let models_resp = client
+        .post(models_url)
+        .header("Authorization", format!("Bearer {access_tok}"))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "Antigravity/1.0")
+        .json(&serde_json::json!({}))
+        .send()?;
+    let models_val: Value = models_resp.json()?;
+    let plan = tok_json
+        .get("plan_type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    parse_available_models(&models_val, plan, now)
 }

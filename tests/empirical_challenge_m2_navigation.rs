@@ -17,7 +17,11 @@ pub mod quota {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct AccountQuotaInfo {
         pub plan_type: Option<String>,
+        pub gemini_week_percent: Option<u32>,
+        pub gemini_window_percent: Option<u32>,
         pub gemini_percent: Option<u32>,
+        pub claude_week_percent: Option<u32>,
+        pub claude_window_percent: Option<u32>,
         pub claude_percent: Option<u32>,
         pub top_model_name: Option<String>,
         pub top_model_percent: Option<u32>,
@@ -27,6 +31,29 @@ pub mod quota {
 
     impl AccountQuotaInfo {
         pub fn display_badge(&self) -> String {
+            let has_week = self.gemini_week_percent.is_some() || self.claude_week_percent.is_some();
+            if has_week {
+                let g = match (
+                    self.gemini_week_percent,
+                    self.gemini_window_percent.or(self.gemini_percent),
+                ) {
+                    (Some(w), Some(h)) => format!("Gemini: {w}%(W) {h}%(5h)"),
+                    (Some(w), None) => format!("Gemini: {w}%(W)"),
+                    (None, Some(h)) => format!("Gemini: {h}%"),
+                    (None, None) => "Gemini: —".to_string(),
+                };
+                let c = match (
+                    self.claude_week_percent,
+                    self.claude_window_percent.or(self.claude_percent),
+                ) {
+                    (Some(w), Some(h)) => format!("Claude: {w}%(W) {h}%(5h)"),
+                    (Some(w), None) => format!("Claude: {w}%(W)"),
+                    (None, Some(h)) => format!("Claude: {h}%"),
+                    (None, None) => "Claude: —".to_string(),
+                };
+                return format!("[{g} | {c}]");
+            }
+
             match (self.gemini_percent, self.claude_percent) {
                 (Some(g), Some(c)) => format!("[Gemini: {g}% | Claude: {c}%]"),
                 (Some(g), None) => format!("[Gemini: {g}%]"),
@@ -519,7 +546,11 @@ fn test_adv_presentation_formatting_bounds() {
     assert_eq!(format_quota_badge(None), "[quota unavailable]");
     let quota_full = AccountQuotaInfo {
         plan_type: Some("Pro".to_string()),
+        gemini_week_percent: None,
+        gemini_window_percent: None,
         gemini_percent: Some(90),
+        claude_week_percent: None,
+        claude_window_percent: None,
         claude_percent: Some(75),
         top_model_name: Some("gemini-1.5-pro".to_string()),
         top_model_percent: Some(90),

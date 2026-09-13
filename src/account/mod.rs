@@ -39,19 +39,21 @@ pub fn list_all_accounts(no_cache: bool) -> Result<()> {
     let mut is_any_fresh = false;
 
     for acc in &accounts {
-        let quota_badge = acc
-            .quota
-            .as_ref()
-            .map(|q| {
-                if q.is_fresh {
-                    is_any_fresh = true;
-                }
-                if latest_fetch_time.is_none() || q.is_fresh {
-                    latest_fetch_time = Some(q.formatted_time());
-                }
-                q.display_badge().cyan().to_string()
-            })
-            .unwrap_or_else(|| "[quota unavailable]".dimmed().to_string());
+        let quota_badge = if let Some(q) = &acc.quota {
+            if q.is_fresh {
+                is_any_fresh = true;
+            }
+            if latest_fetch_time.is_none() || q.is_fresh {
+                latest_fetch_time = Some(q.formatted_time());
+            }
+            crate::ui::widgets::format_quota_badge(Some(q))
+                .cyan()
+                .to_string()
+        } else {
+            crate::ui::widgets::format_quota_badge(None)
+                .dimmed()
+                .to_string()
+        };
 
         if acc.is_active {
             println!(

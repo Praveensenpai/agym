@@ -8,18 +8,16 @@ use crate::account::{
     set_active_account, AccountInfo,
 };
 use crate::ui::widgets::{
-    account_status_label, filter_account_indices, format_accounts_header, format_quota_badge,
-    format_refresh_cooldown, next_index, prev_index, quota_color, style_dimmed, style_header,
-    style_selected, style_warning, COOLDOWN_DISPLAY_DURATION, EVENT_POLL_TIMEOUT,
-    HELP_ACCOUNTS_ALREADY_RUNNING, HELP_ACCOUNTS_DEFAULT, HELP_ACCOUNTS_REFRESHING,
-    REFRESH_COOLDOWN, REFRESH_COOLDOWN_SECS,
+    account_status_label, filter_account_indices, format_accounts_header, format_quota_cell_line,
+    format_refresh_cooldown, next_index, prev_index, style_dimmed, style_header, style_selected,
+    style_warning, COOLDOWN_DISPLAY_DURATION, EVENT_POLL_TIMEOUT, HELP_ACCOUNTS_ALREADY_RUNNING,
+    HELP_ACCOUNTS_DEFAULT, HELP_ACCOUNTS_REFRESHING, REFRESH_COOLDOWN, REFRESH_COOLDOWN_SECS,
 };
 use crate::ui::{run_sessions_tui, TerminalGuard};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    style::Style,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
     Frame,
 };
@@ -253,17 +251,14 @@ impl AccountsApp {
         } else {
             filtered_indices
                 .iter()
-                .filter_map(|&idx| self.accounts.get(idx))
-                .map(|acc| {
+                .enumerate()
+                .filter_map(|(table_idx, &idx)| self.accounts.get(idx).map(|acc| (table_idx, acc)))
+                .map(|(table_idx, acc)| {
+                    let is_selected = self.state.selected() == Some(table_idx);
                     let status_cell = Cell::from(account_status_label(acc.is_active));
                     let email_cell = Cell::from(acc.email.clone());
-                    let quota_str = format_quota_badge(acc.quota.as_ref());
-                    let quota_cell = if let Some(q) = &acc.quota {
-                        let pct = q.gemini_percent.or(q.top_model_percent).unwrap_or(0);
-                        Cell::from(quota_str).style(Style::default().fg(quota_color(pct)))
-                    } else {
-                        Cell::from(quota_str).style(style_dimmed())
-                    };
+                    let quota_cell =
+                        Cell::from(format_quota_cell_line(acc.quota.as_ref(), is_selected));
                     Row::new(vec![status_cell, email_cell, quota_cell])
                 })
                 .collect()
@@ -273,8 +268,8 @@ impl AccountsApp {
             rows,
             [
                 Constraint::Length(12),
-                Constraint::Length(30),
-                Constraint::Min(30),
+                Constraint::Length(28),
+                Constraint::Min(58),
             ],
         )
         .header(Row::new(vec!["Status", "Account Email", "Quota Metrics"]).style(style_header()))

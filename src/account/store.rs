@@ -320,7 +320,11 @@ mod tests {
                 is_active: false,
                 quota: Some(AccountQuotaInfo {
                     plan_type: None,
+                    gemini_week_percent: None,
+                    gemini_window_percent: Some(50),
                     gemini_percent: Some(50),
+                    claude_week_percent: None,
+                    claude_window_percent: Some(20),
                     claude_percent: Some(20),
                     top_model_name: None,
                     top_model_percent: None,
@@ -334,7 +338,11 @@ mod tests {
                 is_active: false,
                 quota: Some(AccountQuotaInfo {
                     plan_type: None,
+                    gemini_week_percent: None,
+                    gemini_window_percent: Some(90),
                     gemini_percent: Some(90),
+                    claude_week_percent: None,
+                    claude_window_percent: Some(10),
                     claude_percent: Some(10),
                     top_model_name: None,
                     top_model_percent: None,
