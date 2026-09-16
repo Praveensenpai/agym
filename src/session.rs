@@ -36,6 +36,32 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+fn is_noise_line(line: &str) -> bool {
+    let l = line.trim();
+    if l.is_empty() || l.starts_with('<') {
+        return true;
+    }
+    const NOISE_PREFIXES: &[&str] = &[
+        "The current local time is:",
+        "The user changed setting",
+        "The user has uploaded",
+        "┌─",
+        "└─",
+        "│",
+        "~ ❯",
+        "~ ✗",
+        "⚠ agent executor error:",
+        "agent executor error:",
+        "Error: The stream was interrupted",
+        "The stream was interrupted",
+        "⚠ There was a network issue",
+        "There was a network issue",
+        "⚠ Agent execution terminated",
+        "Agent execution terminated",
+    ];
+    NOISE_PREFIXES.iter().any(|prefix| l.starts_with(prefix))
+}
+
 pub fn clean_user_text(raw: &str) -> String {
     let mut s = raw.to_string();
     let tags = [
@@ -55,18 +81,7 @@ pub fn clean_user_text(raw: &str) -> String {
     let cleaned = s
         .lines()
         .map(|l| l.trim())
-        .filter(|l| {
-            !l.is_empty()
-                && !l.starts_with('<')
-                && !l.starts_with("The current local time is:")
-                && !l.starts_with("The user changed setting")
-                && !l.starts_with("The user has uploaded")
-                && !l.starts_with("┌─")
-                && !l.starts_with("└─")
-                && !l.starts_with('│')
-                && !l.starts_with("~ ❯")
-                && !l.starts_with("~ ✗")
-        })
+        .filter(|l| !is_noise_line(l))
         .collect::<Vec<&str>>()
         .join("\n");
 
@@ -235,6 +250,13 @@ mod tests {
         let raw = "<USER_REQUEST>\nFix the bug\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\ninfo\n</ADDITIONAL_METADATA>";
         let cleaned = clean_user_text(raw);
         assert_eq!(cleaned, "Fix the bug\ninfo");
+    }
+
+    #[test]
+    fn test_clean_user_text_noise_and_executor_errors() {
+        let raw = "<USER_REQUEST>\n⚠ agent executor error: generating and executing: request failed: write: broken pipe\nError: The stream was interrupted. Please continue the task you were working on.\nHandle this properly\n</USER_REQUEST>";
+        let cleaned = clean_user_text(raw);
+        assert_eq!(cleaned, "Handle this properly");
     }
 
     #[test]
