@@ -200,6 +200,9 @@ pub struct ModelQuotaRenderConfig<'a> {
     pub win_pct: Option<u32>,
 }
 
+/// Standardized fixed column width for the primary (Gemini) model block to ensure vertical divider alignment.
+pub const TARGET_MODEL_BLOCK_WIDTH: usize = 31;
+
 /// Appends styled Spans for an individual model's quota metrics into the line buffer.
 pub fn append_model_quota_spans<'a>(spans: &mut Vec<Span<'a>>, cfg: ModelQuotaRenderConfig<'a>) {
     let name_style = if cfg.is_selected {
@@ -233,20 +236,20 @@ pub fn append_model_quota_spans<'a>(spans: &mut Vec<Span<'a>>, cfg: ModelQuotaRe
         (Some(w), Some(h)) => {
             spans.push(Span::styled("W: ", dim_style));
             spans.push(Span::styled(quota_circle_glyph(w), val_style(w)));
-            spans.push(Span::styled(format!(" {w}%"), val_style(w)));
+            spans.push(Span::styled(format!(" {w:>3}%"), val_style(w)));
             spans.push(Span::styled(" · 5h: ", dim_style));
             spans.push(Span::styled(quota_circle_glyph(h), val_style(h)));
-            spans.push(Span::styled(format!(" {h}%"), val_style(h)));
+            spans.push(Span::styled(format!(" {h:>3}%"), val_style(h)));
         }
         (Some(w), None) => {
             spans.push(Span::styled("W: ", dim_style));
             spans.push(Span::styled(quota_circle_glyph(w), val_style(w)));
-            spans.push(Span::styled(format!(" {w}%"), val_style(w)));
+            spans.push(Span::styled(format!(" {w:>3}%"), val_style(w)));
         }
         (None, Some(h)) => {
             spans.push(Span::styled("5h: ", dim_style));
             spans.push(Span::styled(quota_circle_glyph(h), val_style(h)));
-            spans.push(Span::styled(format!(" {h}%"), val_style(h)));
+            spans.push(Span::styled(format!(" {h:>3}%"), val_style(h)));
         }
         (None, None) => {
             spans.push(Span::styled("—", dim_style));
@@ -280,6 +283,13 @@ pub fn format_quota_cell_line<'a>(quota: Option<&AccountQuotaInfo>, is_selected:
             win_pct: q.gemini_window_percent.or(q.gemini_percent),
         },
     );
+
+    let gemini_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    if gemini_width < TARGET_MODEL_BLOCK_WIDTH {
+        spans.push(Span::raw(
+            " ".repeat(TARGET_MODEL_BLOCK_WIDTH - gemini_width),
+        ));
+    }
 
     spans.push(Span::styled("  │  ", dim_style));
 

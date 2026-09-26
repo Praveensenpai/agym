@@ -203,11 +203,34 @@ fn test_format_quota_cell_line() {
     let line = format_quota_cell_line(Some(&quota_multi), false);
     let full_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
     assert!(full_text.contains("Gemini"));
-    assert!(full_text.contains("W: ● 88%"));
-    assert!(full_text.contains("5h: ◑ 49%"));
+    assert!(full_text.contains("W: ●  88%"));
+    assert!(full_text.contains("5h: ◑  49%"));
     assert!(full_text.contains("Claude"));
-    assert!(full_text.contains("W: ◕ 76%"));
+    assert!(full_text.contains("W: ◕  76%"));
     assert!(full_text.contains("5h: ● 100%"));
+
+    // Verify vertical divider alignment with 5h-only quota
+    let quota_5h = AccountQuotaInfo {
+        plan_type: None,
+        gemini_week_percent: None,
+        gemini_window_percent: Some(100),
+        gemini_percent: Some(100),
+        claude_week_percent: None,
+        claude_window_percent: Some(100),
+        claude_percent: Some(100),
+        top_model_name: None,
+        top_model_percent: None,
+        fetched_at: 0,
+        is_fresh: false,
+    };
+    let line_5h = format_quota_cell_line(Some(&quota_5h), false);
+    let full_text_5h: String = line_5h.spans.iter().map(|s| s.content.as_ref()).collect();
+    let col_multi = full_text.chars().take_while(|&c| c != '│').count();
+    let col_5h = full_text_5h.chars().take_while(|&c| c != '│').count();
+    assert_eq!(
+        col_multi, col_5h,
+        "│ divider must align at the exact same visual column"
+    );
 
     let selected_line = format_quota_cell_line(Some(&quota_multi), true);
     assert!(!selected_line.spans.is_empty());
