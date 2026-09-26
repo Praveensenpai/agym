@@ -6,6 +6,19 @@
 
 ---
 
+## 📸 Visual Showcase
+
+<div align="center">
+
+### ⚡ Interactive Account & Model Quota Dashboard
+*Live multi-window quota tracking (weekly & 5-hour rolling limits) for Gemini and Claude models with instant account switching.*
+
+![Interactive TUI Dashboard](assets/agym_dashboard.png)
+
+</div>
+
+---
+
 ## ⚡ Features
 
 * 🖥️ **Interactive Ratatui TUI Dashboard**: High-performance full-screen TUI dashboard.

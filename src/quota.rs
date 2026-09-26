@@ -30,6 +30,11 @@ fn get_oauth_creds() -> (String, String) {
 
 const CACHE_TTL_SECONDS: u64 = 300; // 5 minutes
 
+const SUMMARY_URL: &str =
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+const MODELS_URL: &str =
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountQuotaInfo {
     #[serde(default)]
@@ -258,7 +263,8 @@ fn parse_quota_summary(val: &Value, now: u64) -> Option<AccountQuotaInfo> {
             let frac = b
                 .get("remainingFraction")
                 .and_then(|f| f.as_f64())
-                .unwrap_or(0.0);
+                .unwrap_or(0.0)
+                .clamp(0.0, 1.0);
             let pct = (frac * 100.0).round() as u32;
             if is_gemini {
                 if window == "weekly" {
@@ -298,7 +304,7 @@ fn parse_available_models(
                 .pointer("/quotaInfo/remainingFraction")
                 .and_then(|v| v.as_f64())
             {
-                gemini_percent = Some((f * 100.0).round() as u32);
+                gemini_percent = Some((f.clamp(0.0, 1.0) * 100.0).round() as u32);
                 break;
             }
         }
@@ -311,7 +317,7 @@ fn parse_available_models(
                 .pointer("/quotaInfo/remainingFraction")
                 .and_then(|v| v.as_f64())
             {
-                claude_percent = Some((f * 100.0).round() as u32);
+                claude_percent = Some((f.clamp(0.0, 1.0) * 100.0).round() as u32);
                 break;
             }
         }
@@ -334,14 +340,13 @@ fn parse_available_models(
 fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
     let (mut tok_json, mut access_tok, refresh_tok) = read_token_data(acc_path)?;
     let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
-    let summary_url = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
 
     let mut resp = client
-        .post(summary_url)
+        .post(SUMMARY_URL)
         .header("Authorization", format!("Bearer {access_tok}"))
         .header("Content-Type", "application/json")
         .header("User-Agent", "Antigravity/1.0")
@@ -353,7 +358,7 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
             if let Some(new_tok) = try_refresh_token(&client, ref_tok, acc_path, &mut tok_json) {
                 access_tok = new_tok;
                 resp = client
-                    .post(summary_url)
+                    .post(SUMMARY_URL)
                     .header("Authorization", format!("Bearer {access_tok}"))
                     .header("Content-Type", "application/json")
                     .header("User-Agent", "Antigravity/1.0")
@@ -373,9 +378,8 @@ fn fetch_quota_live(acc_path: &Path) -> Result<AccountQuotaInfo> {
         }
     }
 
-    let models_url = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
     let models_resp = client
-        .post(models_url)
+        .post(MODELS_URL)
         .header("Authorization", format!("Bearer {access_tok}"))
         .header("Content-Type", "application/json")
         .header("User-Agent", "Antigravity/1.0")

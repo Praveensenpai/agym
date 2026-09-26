@@ -83,8 +83,8 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
 - **Consumers**: `main.rs`, `account::mod`, `ui::accounts`
 - **Side Effects**: Filesystem reads/writes, SQLite database updates, symlink replacement.
 
-### `src/quota.rs` (Role: infra/domain, Lines: 391)
-- **Responsibility**: Live CloudCode quota fetching (`retrieveUserQuotaSummary`, `fetchAvailableModels`), OAuth token auto-refresh, and local JSON disk caching (5-min TTL).
+### `src/quota.rs` (Role: infra/domain, Lines: 394)
+- **Responsibility**: Live CloudCode quota fetching via `daily-cloudcode-pa.googleapis.com` (`retrieveUserQuotaSummary`, `fetchAvailableModels`), OAuth token auto-refresh, and local JSON disk caching (5-min TTL).
 - **Imports**: `chrono::{DateTime, Local}`, `reqwest::blocking::Client`, `serde::{Deserialize, Serialize}`, `serde_json::Value`
 - **Types & Enums**:
   ```rust
@@ -111,7 +111,7 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
   pub fn fetch_quota_cached(account_key: &str, auth_path: &Path, no_cache: bool) -> Result<AccountQuotaInfo>
   ```
 - **Consumers**: `account::store`, `ui::accounts`
-- **Side Effects**: HTTPS POST to `cloudcode-pa.googleapis.com`, disk read/write to `~/.gemini-accounts/.quota_cache.json`.
+- **Side Effects**: HTTPS POST to `daily-cloudcode-pa.googleapis.com`, disk read/write to `~/.gemini-accounts/.quota_cache.json`.
 
 ### `src/session.rs` (Role: domain/infra, Lines: 283)
 - **Responsibility**: Discovers conversation sessions across brain directories, strips terminal artifacts / executor errors, and sanitizes prompt summaries.
@@ -187,4 +187,6 @@ cargo fmt --check
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-09-26**: Generated and integrated high-resolution showcase screenshot (`assets/agym_dashboard.png`) into `README.md` with anti-deblur feathered Gaussian privacy blur.
+- **2026-09-21**: Resolved inaccurate quota metrics by switching CloudCode PA endpoints from `cloudcode-pa.googleapis.com` to `daily-cloudcode-pa.googleapis.com` matching Antigravity CLI live tracking, and added percentage clamping to prevent out-of-bounds metrics.
 - **2026-09-16**: Added `is_noise_line` in `session.rs` to filter `⚠ agent executor error:`, `Error: The stream was interrupted`, and related network error banners from session titles and prompt previews. Added unit tests and created AI-first `CODEBASE.md`.
