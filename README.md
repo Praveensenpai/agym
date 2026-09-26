@@ -1,8 +1,8 @@
 # agym (Antigravity Manager)
 
-> Ultra-fast Antigravity CLI Account Manager & Switcher written in Rust.
+> **Instant multi-account switcher for Antigravity CLI (agy)**
 
-`agym` allows you to switch between multiple Antigravity accounts instantly without logging out and jump directly into previous chat sessions.
+`agym` allows you to switch between multiple Antigravity accounts instantly without logging out, track real-time Gemini & Claude model quotas across all accounts, and jump directly into previous chat sessions.
 
 ---
 

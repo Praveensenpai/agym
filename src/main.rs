@@ -15,7 +15,7 @@ use std::io;
 #[command(author = "Praveensenpai")]
 #[command(disable_version_flag = true)]
 #[command(version = env!("CARGO_PKG_VERSION"))]
-#[command(about = "Unified Antigravity CLI & Account Manager", long_about = None)]
+#[command(about = "Instant multi-account switcher for Antigravity CLI (agy)", long_about = None)]
 struct Cli {
     /// Show the application version
     #[arg(

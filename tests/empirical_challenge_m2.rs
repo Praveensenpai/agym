@@ -28,7 +28,7 @@ fn test_cli_help_flag_displays_usage_and_subcommands() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Unified Antigravity CLI & Account Manager"));
+    assert!(stdout.contains("Instant multi-account switcher for Antigravity CLI (agy)"));
     assert!(stdout.contains("save"));
     assert!(stdout.contains("completions"));
     assert!(stdout.contains("--version"));

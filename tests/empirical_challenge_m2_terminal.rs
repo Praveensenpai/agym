@@ -90,7 +90,7 @@ fn test_main_cli_help_and_subcommands_clean_integration() {
         .expect("failed to execute agym --help");
     assert!(help_output.status.success());
     let stdout = String::from_utf8_lossy(&help_output.stdout);
-    assert!(stdout.contains("Unified Antigravity CLI & Account Manager"));
+    assert!(stdout.contains("Instant multi-account switcher for Antigravity CLI (agy)"));
     assert!(stdout.contains("save"));
     assert!(stdout.contains("completions"));
 
