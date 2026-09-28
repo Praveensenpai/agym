@@ -118,6 +118,14 @@ agym save
 
 ---
 
+## 👥 Contributors
+
+Special thanks to the open-source contributors helping improve `agym`:
+
+* [@whereareiam](https://github.com/whereareiam) — Native macOS Keychain backend & multi-architecture release builds.
+
+---
+
 ## 📜 License
 
 MIT © [Praveensenpai](https://github.com/Praveensenpai)
