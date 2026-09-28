@@ -1,41 +1,72 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
+IFS=$'\n\t'
 
 REPO="Praveensenpai/agym"
 BINARY_NAME="agym"
 INSTALL_DIR="$HOME/.local/bin"
 
+platform_asset() {
+    local os arch
+    os="$(uname -s)"
+    arch="$(uname -m)"
+
+    case "$os:$arch" in
+        Darwin:arm64|Darwin:aarch64)
+            printf '%s\n' "agym-macos-arm64"
+            ;;
+        Darwin:x86_64)
+            printf '%s\n' "agym-macos-x86_64"
+            ;;
+        Linux:x86_64|Linux:amd64)
+            printf '%s\n' "agym-linux-x86_64"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+build_from_source() {
+    local source_dir="$1"
+    cd "$source_dir"
+    cargo build --release
+    cp "target/release/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+}
+
 mkdir -p "$INSTALL_DIR"
 
 if [ -f "Cargo.toml" ]; then
     echo "Building $BINARY_NAME from local source..."
-    cargo build --release
-    rm -f "$INSTALL_DIR/$BINARY_NAME" 2>/dev/null || true
-    cp target/release/"$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+    build_from_source "$PWD"
 else
     echo "Installing $BINARY_NAME..."
     TAG=$(curl -4 -sSL -H "Cache-Control: no-cache" --connect-timeout 10 --retry 3 "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)
+    ASSET_NAME=$(platform_asset || true)
 
-    if [ -n "$TAG" ]; then
-        DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/agym-linux-x86_64.tar.gz"
+    if [ -n "$TAG" ] && [ -n "$ASSET_NAME" ] && command -v curl >/dev/null 2>&1; then
         TMP_DIR=$(mktemp -d)
         trap 'rm -rf "$TMP_DIR"' EXIT
-        echo "📥 Downloading pre-compiled binary $TAG..."
-        curl -4 -sSL -H "Cache-Control: no-cache" --connect-timeout 10 --retry 3 "$DOWNLOAD_URL" | tar -xz -C "$TMP_DIR"
-        cp "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
-    else
-        echo "⚠️  No release tag found. Building from source..."
-        if command -v cargo >/dev/null 2>&1; then
-            TMP_DIR=$(mktemp -d)
-            trap 'rm -rf "$TMP_DIR"' EXIT
-            git clone "https://github.com/$REPO.git" "$TMP_DIR"
-            cd "$TMP_DIR"
-            cargo build --release
-            cp target/release/"$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+        DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME.tar.gz"
+        echo "📥 Downloading pre-compiled binary $TAG for $ASSET_NAME..."
+        if curl -4 -fsSL -H "Cache-Control: no-cache" --connect-timeout 10 --retry 3 "$DOWNLOAD_URL" | tar -xz -C "$TMP_DIR"; then
+            cp "$TMP_DIR/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+            chmod +x "$INSTALL_DIR/$BINARY_NAME"
         else
-            echo "❌ Cargo is required to build from source."
-            exit 1
+            echo "⚠️  No compatible pre-compiled asset found. Building from source..."
+            command -v cargo >/dev/null 2>&1 || { echo "❌ Cargo is required to build from source."; exit 1; }
+            git clone "https://github.com/$REPO.git" "$TMP_DIR/source"
+            build_from_source "$TMP_DIR/source"
         fi
+    elif command -v cargo >/dev/null 2>&1; then
+        echo "⚠️  No compatible release found. Building from source..."
+        TMP_DIR=$(mktemp -d)
+        trap 'rm -rf "$TMP_DIR"' EXIT
+        git clone "https://github.com/$REPO.git" "$TMP_DIR/source"
+        build_from_source "$TMP_DIR/source"
+    else
+        echo "❌ Cargo is required to build from source."
+        exit 1
     fi
 fi
 

@@ -13,7 +13,7 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
 - **Primary Language & Edition**: Rust 2021 edition
 - **Architectural Paradigm**: Modular subsystem separation: `account/`, `quota.rs`, `session.rs`, `ui/`
 - **Hard Constraints**: <400 lines/file, <60 lines/fn, zero production unwrap(), 0 compiler/clippy warnings.
-- **Target Distribution**: Linux x86_64 standalone binary via GitHub Actions release (`~/.local/bin/agym`).
+- **Target Distribution**: Linux x86_64 and macOS arm64/x86_64 standalone binaries via GitHub Actions release (`~/.local/bin/agym`).
 
 ## 3. Module & Interface Skeleton
 
@@ -45,9 +45,13 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
 - **Consumers**: `account::store`, `account::mod`
 - **Side Effects**: HTTPS GET to `www.googleapis.com/oauth2/v1/tokeninfo`.
 
-### `src/account/keyring.rs` (Role: infra, Lines: 80)
-- **Responsibility**: System keyring credential read/write/clear operations via `secret-tool` CLI subprocess.
-- **Imports**: `std::process::Command`, `anyhow::Result`
+### `src/account/keyring.rs` (Role: infra)
+- **Responsibility**: Platform-native credential read/write/clear operations for the active Antigravity token.
+- **`keyring.rs`**: Shared service, account, and label constants; dispatches to the target backend.
+- **`keyring.rs`**: Also normalizes the `go-keyring-base64:` envelope used by Antigravity's Go keyring implementation.
+- **`linux.rs`**: Uses `secret-tool` with stdin/stdout piping through Secret Service.
+- **`macos.rs`**: Uses Apple's `Security.framework` API against the `gemini`/`antigravity` Keychain item.
+- **Imports**: `security_framework::passwords`, `anyhow::Result`
 - **Public Functions & Signatures**:
   ```rust
   pub fn get_current_keyring_token() -> Option<String>
@@ -55,7 +59,7 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
   pub fn clear_keyring_token() -> Result<()>
   ```
 - **Consumers**: `account::store`, `account::mod`
-- **Side Effects**: Spawns `secret-tool` process with stdin/stdout piping.
+- **Side Effects**: Spawns the platform keyring command with stdin/stdout piping where supported.
 
 ### `src/account/store.rs` (Role: domain/infra, Lines: 373)
 - **Responsibility**: Account file persistence in `~/.gemini-accounts/`, profile symlink management in `~/.gemini-profiles/`, and SQLite sync.
@@ -188,6 +192,7 @@ cargo fmt --check
 
 ## 6. Recent Iteration Changes
 - **2026-09-26**: Updated project description across GitHub metadata, Cargo.toml, README.md, and CLI help to `"Instant multi-account switcher for Antigravity CLI (agy)"` and released `v0.0.7`.
+- **2026-09-28**: Added modular Linux/macOS keyring backends, native macOS release assets, architecture-aware installation, and bumped to `v0.0.8`.
 - **2026-09-26**: Aligned quota metrics vertical divider (`TARGET_MODEL_BLOCK_WIDTH = 31`) and right-aligned percentage meters (`{:>3}%`) across multi-window and single-window tiers (`v0.0.6`). Re-captured high-resolution showcase screenshot (`assets/agym_dashboard.png`) with continuous Gaussian privacy blur.
 - **2026-09-26**: Generated and integrated high-resolution showcase screenshot (`assets/agym_dashboard.png`) into `README.md` with anti-deblur feathered Gaussian privacy blur.
 - **2026-09-21**: Resolved inaccurate quota metrics by switching CloudCode PA endpoints from `cloudcode-pa.googleapis.com` to `daily-cloudcode-pa.googleapis.com` matching Antigravity CLI live tracking, and added percentage clamping to prevent out-of-bounds metrics.

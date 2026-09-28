@@ -31,6 +31,7 @@
 * 🛠️ **CLI Subcommands**: Streamlined CLI support for direct account switching (`agym <email>`) and saving sessions (`agym save`).
 * 🐚 **Shell Autocompletions**: Native autocompletion support for `bash`, `zsh`, and `fish`.
 * 📦 **Single Standalone Binary**: Zero runtime dependencies.
+* 🍎 **Native macOS Support**: Uses the macOS Keychain and ships Apple Silicon and Intel builds.
 
 ---
 
@@ -50,6 +51,8 @@ cd agym
 chmod +x install.sh
 ./install.sh
 ```
+
+The installer selects the matching Linux x86_64, macOS Apple Silicon, or macOS Intel release asset. If a compatible asset is unavailable, it falls back to a local source build.
 
 ---
 
