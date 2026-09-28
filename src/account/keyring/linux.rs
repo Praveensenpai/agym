@@ -1,8 +1,8 @@
 //! Linux Secret Service backend implemented through `secret-tool`.
 
 use super::{
-    normalize_keyring_secret, KEYRING_LABEL, KEYRING_SERVICE_KEY, KEYRING_SERVICE_VAL,
-    KEYRING_USER_KEY, KEYRING_USER_VAL,
+    normalize_keyring_secret, KEYRING_SERVICE_KEY, KEYRING_SERVICE_VAL, KEYRING_USER_KEY,
+    KEYRING_USER_VAL,
 };
 use anyhow::{bail, Result};
 use std::io::Write;
@@ -92,6 +92,7 @@ pub fn clear_keyring_token() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::keyring::KEYRING_LABEL;
 
     #[test]
     fn test_keyring_constants() {

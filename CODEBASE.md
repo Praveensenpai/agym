@@ -192,7 +192,7 @@ cargo fmt --check
 
 ## 6. Recent Iteration Changes
 - **2026-09-26**: Updated project description across GitHub metadata, Cargo.toml, README.md, and CLI help to `"Instant multi-account switcher for Antigravity CLI (agy)"` and released `v0.0.7`.
-- **2026-09-28**: Added modular Linux/macOS keyring backends, native macOS release assets, architecture-aware installation, and bumped to `v0.0.8`.
+- **2026-09-28**: Added modular Linux/macOS keyring backends (`Security.framework` Keychain & Secret Service), native macOS Apple Silicon and Intel release assets, architecture-aware installer, patched cross-target dead-code guards, and released `v0.0.8`.
 - **2026-09-26**: Aligned quota metrics vertical divider (`TARGET_MODEL_BLOCK_WIDTH = 31`) and right-aligned percentage meters (`{:>3}%`) across multi-window and single-window tiers (`v0.0.6`). Re-captured high-resolution showcase screenshot (`assets/agym_dashboard.png`) with continuous Gaussian privacy blur.
 - **2026-09-26**: Generated and integrated high-resolution showcase screenshot (`assets/agym_dashboard.png`) into `README.md` with anti-deblur feathered Gaussian privacy blur.
 - **2026-09-21**: Resolved inaccurate quota metrics by switching CloudCode PA endpoints from `cloudcode-pa.googleapis.com` to `daily-cloudcode-pa.googleapis.com` matching Antigravity CLI live tracking, and added percentage clamping to prevent out-of-bounds metrics.

@@ -18,6 +18,7 @@ pub const KEYRING_USER_KEY: &str = "username";
 pub const KEYRING_USER_VAL: &str = "antigravity";
 
 /// Display label assigned to stored Antigravity secret items in the system keystore.
+#[cfg(any(target_os = "macos", test))]
 pub const KEYRING_LABEL: &str = "Password for 'antigravity' on 'gemini'";
 
 const GO_KEYRING_ENCODING_PREFIX: &str = "go-keyring-base64:";
@@ -37,6 +38,7 @@ pub(crate) fn normalize_keyring_secret(secret: &[u8]) -> Option<String> {
     (!secret.is_empty()).then_some(secret)
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn encode_keyring_secret(secret: &str) -> String {
     format!(
         "{GO_KEYRING_ENCODING_PREFIX}{}",
