@@ -90,13 +90,83 @@ pub fn import_conversation(account: &str, cid: &str) -> Result<String> {
         fs::copy(&src_ann, dst_ann.join(format!("{new_cid}.pbtxt")))?;
     }
 
+    rewrite_trajectory_cascade(&dst_conv.join(format!("{new_cid}.db")), &new_cid)?;
     clone_summary_row(
         &src.join("conversation_summaries.db"),
         &dst.join("conversation_summaries.db"),
         cid,
         &new_cid,
     )?;
+    rewrite_jetbox_cid(&dst.join("jetbox_summaries_proto.pb"), cid, &new_cid)?;
     Ok(new_cid)
+}
+
+/// Rewrites the source CID embedded in a `raw_summary` protobuf blob to the new CID.
+///
+/// Both IDs are 36-byte UUIDs, so the replacement preserves the blob's length framing.
+fn rewrite_cid_bytes(blob: &[u8], old_cid: &str, new_cid: &str) -> Vec<u8> {
+    let mut out = blob.to_vec();
+    if old_cid.len() != new_cid.len() {
+        return out;
+    }
+    let old = old_cid.as_bytes();
+    let new = new_cid.as_bytes();
+    let mut i = 0;
+    while i + old.len() <= out.len() {
+        if &out[i..i + old.len()] == old {
+            out[i..i + new.len()].copy_from_slice(new);
+            i += new.len();
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Points the copied conversation's `trajectory_meta.cascade_id` at the new CID.
+fn rewrite_trajectory_cascade(db_path: &Path, new_cid: &str) -> Result<()> {
+    if !db_path.exists() {
+        return Ok(());
+    }
+    let conn = Connection::open(db_path)?;
+    let has_table: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='trajectory_meta'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if has_table {
+        conn.execute(
+            "UPDATE trajectory_meta SET cascade_id = ?1",
+            rusqlite::params![new_cid],
+        )?;
+    }
+    Ok(())
+}
+
+/// Appends a `jetbox_summaries_proto.pb` record for the copied conversation by
+/// cloning the source record and rewriting its embedded conversation ID.
+fn rewrite_jetbox_cid(pb_path: &Path, old_cid: &str, new_cid: &str) -> Result<()> {
+    if !pb_path.exists() || old_cid.len() != new_cid.len() {
+        return Ok(());
+    }
+    let data = fs::read(pb_path)?;
+    let old = old_cid.as_bytes();
+    let mut out = data.clone();
+    let mut i = 0;
+    while i + old.len() <= out.len() {
+        if &out[i..i + old.len()] == old {
+            out[i..i + new_cid.len()].copy_from_slice(new_cid.as_bytes());
+            i += new_cid.len();
+        } else {
+            i += 1;
+        }
+    }
+    if out != data {
+        fs::write(pb_path, out)?;
+    }
+    Ok(())
 }
 
 /// Clones a single row in `conversation_summaries` under a new conversation ID.
@@ -149,8 +219,29 @@ fn clone_summary_row(src_db: &Path, dst_db: &Path, old_cid: &str, new_cid: &str)
          app_data_dir, raw_summary, group_id) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
         rusqlite::params![
-            new_cid, row.0, row.1, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10,
-            row.11, row.12, row.13, row.14, row.15, row.16, row.17, row.18, row.19
+            new_cid,
+            row.0,
+            row.1,
+            row.2,
+            row.3,
+            row.4,
+            row.5,
+            row.6,
+            row.7,
+            row.8,
+            row.9,
+            row.10,
+            row.11,
+            row.12,
+            row.13,
+            row.14,
+            row.15,
+            row.16,
+            row.17,
+            row.18
+                .as_deref()
+                .map(|b| rewrite_cid_bytes(b, old_cid, new_cid)),
+            row.19
         ],
     )?;
     Ok(())
@@ -174,6 +265,15 @@ mod tests {
         let c = Connection::open(&db).unwrap();
         c.execute("CREATE TABLE steps(idx integer primary key)", [])
             .unwrap();
+        c.execute(
+            "CREATE TABLE trajectory_meta (trajectory_id text, cascade_id text, trajectory_type integer, source integer, PRIMARY KEY (trajectory_id))",
+            [],
+        ).unwrap();
+        c.execute(
+            "INSERT INTO trajectory_meta VALUES ('traj-1','SRC-CID',4,17)",
+            [],
+        )
+        .unwrap();
         drop(c);
 
         fs::write(src.join("brain/SRC-CID/scratch/note.txt"), b"hi").unwrap();
@@ -247,6 +347,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(title, "T");
+        let copied_db = tmp.join(format!(
+            ".gemini-profiles/dstacct/antigravity-cli/conversations/{new_cid}.db"
+        ));
+        let cc = Connection::open(&copied_db).unwrap();
+        let cascade: String = cc
+            .query_row("SELECT cascade_id FROM trajectory_meta", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(cascade, new_cid);
 
         match old_home {
             Some(h) => std::env::set_var("HOME", h),
