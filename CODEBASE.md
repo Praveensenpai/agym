@@ -119,7 +119,7 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
 - **Consumers**: `account::store`, `ui::accounts`
 - **Side Effects**: HTTPS POST to `daily-cloudcode-pa.googleapis.com`, disk read/write to `~/.gemini-accounts/.quota_cache.json`.
 
-### `src/session.rs` (Role: domain/infra, Lines: ~300)
+### `src/session.rs` + `src/session/import.rs` (Role: domain/infra)
 - **Responsibility**: Discovers conversation sessions across brain directories and named profiles, derives owning account from path, dedupes by `(account, cid)`, strips terminal artifacts / executor errors, and sanitizes prompt summaries.
 - **Imports**: `chrono::{DateTime, Local}`, `serde_json::Value`, `walkdir::WalkDir`
 - **Types & Enums**:
@@ -146,6 +146,11 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
   ```
 - **Consumers**: `ui::sessions`, `ui::widgets`
 - **Side Effects**: Recursive directory traversal of `~/.gemini/antigravity-cli/brain`, `~/.antigravity-agent/brain`, and `~/.gemini-profiles/*/{antigravity-cli,gemini/antigravity-cli}/brain`.
+
+### `src/session/import.rs` (Role: domain/infra, Lines: ~270)
+- **Responsibility**: Copies a conversation owned by another profile into the active profile under a fresh v4 UUID: trajectory DB, brain transcript dir, annotations, and a cloned `conversation_summaries` row.
+- **Public Functions**: `pub fn import_conversation(account: &str, cid: &str) -> Result<String>`
+- **Side Effects**: Filesystem copy into `~/.gemini/antigravity-cli/`, SQLite inserts.
 
 ### `src/ui/mod.rs` (Role: tui, Lines: 43)
 - **Responsibility**: Crossterm raw terminal guard and TUI lifecycle switching between Accounts and Sessions views.
@@ -196,6 +201,7 @@ cargo fmt --check
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-10-05**: Added cross-account "Copy & continue". The Session Explorer resume overlay now offers three colored buttons (`Switch` / `Copy & continue` / `Cancel`); Copy imports the conversation into the active profile under a new CID (`import_conversation`), then resumes it. Split `session.rs`->`session/import.rs`, `ui/sessions.rs`->`ui/sessions/{confirm,table}.rs`, `ui/widgets.rs`->`ui/widgets/quota.rs` to honor the <400-line rule.
 - **2026-10-05**: Replaced the typed `[y/N]` switch prompt with colored, keyboard-navigable Yes/No buttons in the Session Explorer overlay. `Yes` (green) is focused by default; `←/→`/`Tab` toggles focus, `Enter` activates the focused button, `y`/`n`/`Esc` remain shortcuts. Added `ConfirmState`, `format_resume_buttons()`, and `BUTTON_YES_LABEL`/`BUTTON_NO_LABEL`.
 - **2026-10-05**: Session Explorer now shows the owning account per conversation and warns before resuming a session from a different account. Added `SessionInfo.account`, `account_from_path()`, `(account, cid)` dedupe, an in-TUI `[y/N]` switch overlay with remaining-quota display, and `SessionsOutcome::SwitchAndResume` (auto `set_active_account` before `agy`).
 - **2026-09-26**: Updated project description across GitHub metadata, Cargo.toml, README.md, and CLI help to `"Instant multi-account switcher for Antigravity CLI (agy)"` and released `v0.0.7`.

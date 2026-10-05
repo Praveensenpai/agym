@@ -1,3 +1,9 @@
+//! Session discovery, transcript cleaning, and cross-account conversation import.
+
+mod import;
+
+pub use import::import_conversation;
+
 use chrono::{DateTime, Local};
 use serde_json::Value;
 use std::collections::HashMap;

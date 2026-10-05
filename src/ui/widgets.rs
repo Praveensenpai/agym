@@ -38,15 +38,19 @@ pub const HELP_SESSIONS_DEFAULT: &str =
     " [Enter] Resume | [Space/v] Toggle Preview | [a] Accounts | [/] Filter | [q] Quit";
 /// Help text shown while the switch-account confirmation overlay is active.
 pub const HELP_SESSIONS_CONFIRM: &str =
-    " [←/→ or Tab] Select | [Enter] Confirm | [y] Yes | [n/Esc] Cancel";
+    " [←/→ or Tab] Select | [Enter] Confirm | [s] Switch | [c] Copy | [Esc] Cancel";
 /// Title displayed on the Session Detail Preview pane border.
 pub const TITLE_SESSION_DETAIL: &str = " 🔍 Session Detail Preview ";
 /// Title displayed on the switch-account confirmation overlay border.
-pub const TITLE_SESSION_CONFIRM: &str = " ⚠ Account Switch Required ";
-/// Label for the affirmative switch-and-resume button.
-pub const BUTTON_YES_LABEL: &str = " Yes, switch & resume ";
-/// Label for the negative cancel button.
-pub const BUTTON_NO_LABEL: &str = " No, cancel ";
+pub const TITLE_SESSION_CONFIRM: &str = " ⚠ Resume Different Account ";
+/// Label for the switch-account button.
+pub const BUTTON_SWITCH_LABEL: &str = " Switch ";
+/// Label for the copy-and-continue button.
+pub const BUTTON_COPY_LABEL: &str = " Copy & continue ";
+/// Label for the cancel button.
+pub const BUTTON_CANCEL_LABEL: &str = " Cancel ";
+/// Number of buttons in the resume confirmation overlay.
+pub const RESUME_BUTTON_COUNT: usize = 3;
 
 // --- Styling Helpers ---
 
@@ -168,161 +172,10 @@ pub fn account_status_label(is_active: bool) -> &'static str {
     }
 }
 
-/// Returns the color indicator corresponding to a quota percentage (>=50% Green, 20-49% Yellow, <20% Red).
-#[must_use]
-pub fn quota_color(percent: u32) -> Color {
-    match percent {
-        p if p >= 50 => Color::Green,
-        p if p >= 20 => Color::Yellow,
-        _ => Color::Red,
-    }
-}
+#[path = "widgets/quota.rs"]
+pub mod quota;
 
-/// Returns the circular progress meter glyph matching the quota percentage.
-#[must_use]
-pub fn quota_circle_glyph(percent: u32) -> &'static str {
-    match percent {
-        88..=u32::MAX => "●",
-        63..=87 => "◕",
-        38..=62 => "◑",
-        13..=37 => "◔",
-        _ => "○",
-    }
-}
-
-/// Returns the color indicator corresponding to a quota percentage.
-#[must_use]
-pub fn quota_progress_color(percent: u32) -> Color {
-    if (50..75).contains(&percent) {
-        Color::Cyan
-    } else {
-        quota_color(percent)
-    }
-}
-
-/// Configuration options for rendering a model's quota meters.
-pub struct ModelQuotaRenderConfig<'a> {
-    pub name: &'a str,
-    pub name_color: Color,
-    pub is_selected: bool,
-    pub week_pct: Option<u32>,
-    pub win_pct: Option<u32>,
-}
-
-/// Standardized fixed column width for the primary (Gemini) model block to ensure vertical divider alignment.
-pub const TARGET_MODEL_BLOCK_WIDTH: usize = 31;
-
-/// Appends styled Spans for an individual model's quota metrics into the line buffer.
-pub fn append_model_quota_spans<'a>(spans: &mut Vec<Span<'a>>, cfg: ModelQuotaRenderConfig<'a>) {
-    let name_style = if cfg.is_selected {
-        Style::default()
-            .fg(Color::Black)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(cfg.name_color)
-            .add_modifier(Modifier::BOLD)
-    };
-    let dim_style = if cfg.is_selected {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        style_dimmed()
-    };
-    let val_style = |pct: u32| {
-        if cfg.is_selected {
-            Style::default()
-                .fg(Color::Black)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(quota_progress_color(pct))
-        }
-    };
-
-    spans.push(Span::styled(cfg.name, name_style));
-    spans.push(Span::styled(" [", dim_style));
-
-    match (cfg.week_pct, cfg.win_pct) {
-        (Some(w), Some(h)) => {
-            spans.push(Span::styled("W: ", dim_style));
-            spans.push(Span::styled(quota_circle_glyph(w), val_style(w)));
-            spans.push(Span::styled(format!(" {w:>3}%"), val_style(w)));
-            spans.push(Span::styled(" · 5h: ", dim_style));
-            spans.push(Span::styled(quota_circle_glyph(h), val_style(h)));
-            spans.push(Span::styled(format!(" {h:>3}%"), val_style(h)));
-        }
-        (Some(w), None) => {
-            spans.push(Span::styled("W: ", dim_style));
-            spans.push(Span::styled(quota_circle_glyph(w), val_style(w)));
-            spans.push(Span::styled(format!(" {w:>3}%"), val_style(w)));
-        }
-        (None, Some(h)) => {
-            spans.push(Span::styled("5h: ", dim_style));
-            spans.push(Span::styled(quota_circle_glyph(h), val_style(h)));
-            spans.push(Span::styled(format!(" {h:>3}%"), val_style(h)));
-        }
-        (None, None) => {
-            spans.push(Span::styled("—", dim_style));
-        }
-    }
-    spans.push(Span::styled("]", dim_style));
-}
-
-/// Formats a complete multi-window, circular styled `Line` for an account's quota table cell.
-#[must_use]
-pub fn format_quota_cell_line<'a>(quota: Option<&AccountQuotaInfo>, is_selected: bool) -> Line<'a> {
-    let q = match quota {
-        Some(q) => q,
-        None => return Line::from(vec![Span::styled(format_quota_badge(None), style_dimmed())]),
-    };
-
-    let dim_style = if is_selected {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        style_dimmed()
-    };
-
-    let mut spans = Vec::with_capacity(16);
-    append_model_quota_spans(
-        &mut spans,
-        ModelQuotaRenderConfig {
-            name: "Gemini",
-            name_color: Color::Cyan,
-            is_selected,
-            week_pct: q.gemini_week_percent,
-            win_pct: q.gemini_window_percent.or(q.gemini_percent),
-        },
-    );
-
-    let gemini_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-    if gemini_width < TARGET_MODEL_BLOCK_WIDTH {
-        spans.push(Span::raw(
-            " ".repeat(TARGET_MODEL_BLOCK_WIDTH - gemini_width),
-        ));
-    }
-
-    spans.push(Span::styled("  │  ", dim_style));
-
-    append_model_quota_spans(
-        &mut spans,
-        ModelQuotaRenderConfig {
-            name: "Claude",
-            name_color: Color::Magenta,
-            is_selected,
-            week_pct: q.claude_week_percent,
-            win_pct: q.claude_window_percent.or(q.claude_percent),
-        },
-    );
-
-    Line::from(spans)
-}
-
-/// Formats the quota badge text with a safe fallback when quota info is missing.
-#[must_use]
-pub fn format_quota_badge(quota: Option<&AccountQuotaInfo>) -> String {
-    quota
-        .map(|q| q.display_badge())
-        .unwrap_or_else(|| "[quota unavailable]".to_string())
-}
+pub use quota::{format_quota_badge, format_quota_cell_line};
 
 pub use crate::session::format_bytes;
 
@@ -387,21 +240,41 @@ pub fn format_resume_prompt(
     };
 
     format!(
-        "This conversation belongs to account '{}'.\n\nActive account: '{}'.\n{}{}\n\nSwitch to '{}' and resume?",
+        "This conversation belongs to account '{}'.\n\nActive account: '{}'.\n{}{}\n\nSwitch to '{}', or copy it here and continue?",
         session.account, active_account, quota_line, exhausted_line, session.account
     )
 }
 
-/// Builds a styled button line, highlighting the focused button.
+/// Builds the styled three-button line (`Switch`, `Copy & continue`, `Cancel`),
+/// highlighting the focused button by index.
 #[must_use]
-pub fn format_resume_buttons(yes_focused: bool) -> Line<'static> {
-    let yes_style = button_style(yes_focused, Color::Green);
-    let no_style = button_style(!yes_focused, Color::Red);
-    Line::from(vec![
-        Span::styled(format!("  {}  ", BUTTON_YES_LABEL), yes_style),
-        Span::raw("     "),
-        Span::styled(format!("  {}  ", BUTTON_NO_LABEL), no_style),
-    ])
+pub fn format_resume_buttons(focused: usize) -> Line<'static> {
+    let buttons = [
+        (BUTTON_SWITCH_LABEL, Color::Green),
+        (BUTTON_COPY_LABEL, Color::Cyan),
+        (BUTTON_CANCEL_LABEL, Color::Red),
+    ];
+    let mut spans = Vec::with_capacity(buttons.len() * 2);
+    for (i, (label, color)) in buttons.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("   "));
+        }
+        spans.push(Span::styled(
+            format!("  {label}  "),
+            button_style(i == focused, *color),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Cycles the button focus index left or right within the overlay button count.
+#[must_use]
+pub fn cycle_button_focus(current: usize, forward: bool) -> usize {
+    if forward {
+        (current + 1) % RESUME_BUTTON_COUNT
+    } else {
+        (current + RESUME_BUTTON_COUNT - 1) % RESUME_BUTTON_COUNT
+    }
 }
 
 /// Returns the button style for the given focus state and base color.

@@ -108,6 +108,7 @@ mod widgets;
 use account::AccountInfo;
 use quota::AccountQuotaInfo;
 use session::SessionInfo;
+use widgets::quota::quota_color;
 use widgets::*;
 
 fn make_test_account(email: &str, is_active: bool) -> AccountInfo {
@@ -616,13 +617,19 @@ fn test_adv_presentation_formatting_bounds() {
 
     let prompt = format_resume_prompt(&sess, "activeuser", None);
     assert!(prompt.contains("belongs to account 'default'"));
-    assert!(prompt.contains("Switch to 'default' and resume?"));
+    assert!(prompt.contains("copy it here and continue"));
     assert!(!prompt.contains("[y/N]"));
 
-    let yes_line = format_resume_buttons(true);
-    assert!(yes_line.spans.iter().any(|s| s.content.contains("Yes")));
-    let no_line = format_resume_buttons(false);
-    assert!(no_line.spans.iter().any(|s| s.content.contains("No")));
+    let line = format_resume_buttons(0);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.contains("Switch"));
+    assert!(text.contains("Copy & continue"));
+    assert!(text.contains("Cancel"));
+
+    assert_eq!(cycle_button_focus(0, true), 1);
+    assert_eq!(cycle_button_focus(1, true), 2);
+    assert_eq!(cycle_button_focus(2, true), 0);
+    assert_eq!(cycle_button_focus(0, false), 2);
 
     let _ = style_header();
     let _ = style_selected();

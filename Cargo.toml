@@ -1,6 +1,6 @@
 [package]
 name = "agym"
-version = "0.0.10"
+version = "0.0.11"
 edition = "2021"
 description = "Instant multi-account switcher for Antigravity CLI (agy)"
 

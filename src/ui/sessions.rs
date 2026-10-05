@@ -3,22 +3,20 @@
 //! Provides the split-screen TUI interface for inspecting past Antigravity transcripts,
 //! full-prompt previews, and resuming sessions via external `agy --conversation <cid>` execution.
 
-use crate::account::{
-    current_active_email, email_prefix, list_account_infos_cached, set_active_account,
-};
-use crate::session::{scan_sessions, SessionInfo};
+mod confirm;
+mod table;
+
+use crate::account::{current_active_email, email_prefix, set_active_account};
+use crate::session::{import_conversation, scan_sessions, SessionInfo};
 use crate::ui::widgets::{
-    filter_session_indices, format_bytes, format_resume_buttons, format_resume_prompt,
-    format_session_detail, format_sessions_header, next_index, prev_index, style_dimmed,
-    style_header, style_selected, style_warning, EVENT_POLL_TIMEOUT, HELP_SESSIONS_CONFIRM,
-    HELP_SESSIONS_DEFAULT, TITLE_SESSION_CONFIRM, TITLE_SESSION_DETAIL,
+    cycle_button_focus, filter_session_indices, next_index, prev_index, style_dimmed,
+    EVENT_POLL_TIMEOUT, HELP_SESSIONS_CONFIRM, HELP_SESSIONS_DEFAULT, RESUME_BUTTON_COUNT,
 };
 use crate::ui::{run_accounts_tui, TerminalGuard};
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, Clear, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{Block, Borders, Paragraph, TableState},
     Frame,
 };
 
@@ -33,6 +31,8 @@ pub enum SessionsOutcome {
     ResumeSession(String),
     /// Switch to the owning account, then resume the conversation.
     SwitchAndResume { account: String, cid: String },
+    /// Copy the conversation into the active account, then resume the copy.
+    CopyAndResume { account: String, cid: String },
 }
 
 /// State for the account-switch confirmation overlay.
@@ -40,8 +40,8 @@ pub enum SessionsOutcome {
 pub struct ConfirmState {
     /// Index into `SessionsApp::sessions` for the session to resume.
     pub session_idx: usize,
-    /// Whether the affirmative (Yes) button currently holds focus.
-    pub yes_focused: bool,
+    /// Focused button index (`0` = Switch, `1` = Copy, `2` = Cancel).
+    pub focused: usize,
 }
 
 /// State machine for the interactive Sessions TUI view.
@@ -105,31 +105,37 @@ impl SessionsApp {
 
         self.pending_switch = Some(ConfirmState {
             session_idx: real_idx,
-            yes_focused: true,
+            focused: 0,
         });
         None
     }
 
-    /// Activates the currently focused confirmation button.
+    /// Activates the focused confirmation button, producing the matching outcome.
     fn confirm_activate(&mut self) -> Option<SessionsOutcome> {
         let state = self.pending_switch.take()?;
-        if !state.yes_focused {
-            return None;
-        }
         let session = self.sessions.get(state.session_idx)?;
-        Some(SessionsOutcome::SwitchAndResume {
-            account: session.account.clone(),
-            cid: session.cid.clone(),
-        })
+        match state.focused {
+            0 => Some(SessionsOutcome::SwitchAndResume {
+                account: session.account.clone(),
+                cid: session.cid.clone(),
+            }),
+            1 => Some(SessionsOutcome::CopyAndResume {
+                account: session.account.clone(),
+                cid: session.cid.clone(),
+            }),
+            _ => None,
+        }
     }
 
     /// Handles keys while the switch confirmation overlay is visible.
     fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<SessionsOutcome> {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                if let Some(state) = self.pending_switch.as_mut() {
-                    state.yes_focused = true;
-                }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                self.set_confirm_focus(0);
+                self.confirm_activate()
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.set_confirm_focus(1);
                 self.confirm_activate()
             }
             KeyCode::Enter => self.confirm_activate(),
@@ -137,13 +143,29 @@ impl SessionsApp {
                 self.pending_switch = None;
                 None
             }
-            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
-                if let Some(state) = self.pending_switch.as_mut() {
-                    state.yes_focused = !state.yes_focused;
-                }
+            KeyCode::Left | KeyCode::BackTab => {
+                self.cycle_confirm_focus(false);
+                None
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                self.cycle_confirm_focus(true);
                 None
             }
             _ => None,
+        }
+    }
+
+    /// Sets the focused button index, clamped to the valid range.
+    fn set_confirm_focus(&mut self, index: usize) {
+        if let Some(state) = self.pending_switch.as_mut() {
+            state.focused = index.min(RESUME_BUTTON_COUNT - 1);
+        }
+    }
+
+    /// Moves the overlay focus forward or backward with wrap-around.
+    fn cycle_confirm_focus(&mut self, forward: bool) {
+        if let Some(state) = self.pending_switch.as_mut() {
+            state.focused = cycle_button_focus(state.focused, forward);
         }
     }
 
@@ -208,94 +230,9 @@ impl SessionsApp {
 
     /// Renders header, session table, optional detail preview pane, and footer into the frame.
     pub fn render(&mut self, frame: &mut Frame, filtered_indices: &[usize]) {
-        let layout_constraints = if self.show_detail {
-            vec![
-                Constraint::Length(3),
-                Constraint::Percentage(50),
-                Constraint::Min(6),
-                Constraint::Length(3),
-            ]
-        } else {
-            vec![
-                Constraint::Length(3),
-                Constraint::Min(6),
-                Constraint::Length(3),
-            ]
-        };
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(layout_constraints)
-            .split(frame.area());
-
-        let header = Paragraph::new(format_sessions_header(filtered_indices.len(), &self.filter))
-            .style(style_header())
-            .block(Block::default().borders(Borders::ALL));
-        frame.render_widget(header, chunks[0]);
-
-        let rows: Vec<Row> = filtered_indices
-            .iter()
-            .filter_map(|&idx| self.sessions.get(idx))
-            .map(|s| {
-                Row::new(vec![
-                    s.short_cid.clone(),
-                    s.account.clone(),
-                    s.datetime.clone(),
-                    format_bytes(s.size_bytes),
-                    format!("{} lines", s.line_count),
-                    s.summary.clone(),
-                ])
-            })
-            .collect();
-
-        let table = Table::new(
-            rows,
-            [
-                Constraint::Length(10),
-                Constraint::Length(14),
-                Constraint::Length(18),
-                Constraint::Length(10),
-                Constraint::Length(10),
-                Constraint::Min(30),
-            ],
-        )
-        .header(
-            Row::new(vec![
-                "CID",
-                "Account",
-                "Date/Time",
-                "Size",
-                "Lines",
-                "Prompt Summary",
-            ])
-            .style(style_header()),
-        )
-        .block(Block::default().borders(Borders::ALL))
-        .row_highlight_style(style_selected());
-
-        frame.render_stateful_widget(table, chunks[1], &mut self.state);
-
-        let footer_idx = if self.show_detail {
-            let selected_session = self
-                .state
-                .selected()
-                .and_then(|i| filtered_indices.get(i))
-                .and_then(|&real_idx| self.sessions.get(real_idx));
-            let detail_text = format_session_detail(selected_session);
-
-            let detail_block = Paragraph::new(detail_text)
-                .wrap(Wrap { trim: false })
-                .block(
-                    Block::default()
-                        .title(TITLE_SESSION_DETAIL)
-                        .borders(Borders::ALL)
-                        .border_style(style_warning()),
-                );
-            frame.render_widget(detail_block, chunks[2]);
-            3
-        } else {
-            2
-        };
+        let chunks = table::layout_chunks(frame, self.show_detail);
+        table::render_table(self, frame, &chunks, filtered_indices);
+        let footer_idx = table::render_detail_pane(self, frame, &chunks, filtered_indices);
 
         let status_text = if self.pending_switch.is_some() {
             HELP_SESSIONS_CONFIRM.to_string()
@@ -314,72 +251,11 @@ impl SessionsApp {
         frame.render_widget(footer, chunks[footer_idx]);
 
         if let Some(state) = &self.pending_switch {
-            self.render_confirm_overlay(frame, state);
+            if let Some(session) = self.sessions.get(state.session_idx) {
+                confirm::render_confirm_overlay(frame, session, &Self::active_account(), state);
+            }
         }
     }
-
-    /// Renders the centered account-switch confirmation overlay with quota info
-    /// and colored Yes/No buttons.
-    fn render_confirm_overlay(&self, frame: &mut Frame, state: &ConfirmState) {
-        let Some(session) = self.sessions.get(state.session_idx) else {
-            return;
-        };
-        let active = Self::active_account();
-        let quota = list_account_infos_cached()
-            .into_iter()
-            .find(|a| email_prefix(&a.email) == session.account)
-            .and_then(|a| a.quota);
-
-        let body = format_resume_prompt(session, &active, quota.as_ref());
-        let buttons = format_resume_buttons(state.yes_focused);
-        let area = centered_rect(70, 50, frame.area());
-        frame.render_widget(Clear, area);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(3)])
-            .split(area);
-
-        let overlay = Paragraph::new(body)
-            .wrap(Wrap { trim: false })
-            .style(style_warning())
-            .block(
-                Block::default()
-                    .title(TITLE_SESSION_CONFIRM)
-                    .borders(Borders::ALL)
-                    .border_style(style_warning()),
-            );
-        frame.render_widget(overlay, chunks[0]);
-
-        let button_bar = Paragraph::new(buttons)
-            .alignment(ratatui::layout::Alignment::Center)
-            .block(Block::default().borders(Borders::TOP));
-        frame.render_widget(button_bar, chunks[1]);
-    }
-}
-
-/// Computes a centered rectangle of the given percentage width/height.
-fn centered_rect(
-    percent_x: u16,
-    percent_y: u16,
-    area: ratatui::layout::Rect,
-) -> ratatui::layout::Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
 }
 
 impl Default for SessionsApp {
@@ -421,6 +297,18 @@ pub fn run_sessions_tui() -> Result<()> {
         SessionsOutcome::SwitchAndResume { account, cid } => {
             set_active_account(&account)?;
             launch_agy_conversation(&cid)
+        }
+        SessionsOutcome::CopyAndResume { account, cid } => {
+            match import_conversation(&account, &cid) {
+                Ok(new_cid) => {
+                    println!("Copied conversation into active account as {new_cid}");
+                    launch_agy_conversation(&new_cid)
+                }
+                Err(e) => {
+                    eprintln!("Failed to copy conversation: {e}");
+                    Ok(())
+                }
+            }
         }
     }
 }
