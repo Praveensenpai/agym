@@ -81,10 +81,12 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
   pub fn list_account_infos_with<F>(quota_for: F, detect_active: bool) -> Vec<AccountInfo>
   pub fn list_account_infos(no_cache: bool) -> Vec<AccountInfo>
   pub fn list_account_infos_cached() -> Vec<AccountInfo>
+  pub fn current_active_email() -> Option<String>
+  pub fn email_prefix(email: &str) -> &str
   pub fn set_active_account(target: &str) -> Result<()>
   pub fn remove_account(account_name: &str) -> Result<()>
   ```
-- **Consumers**: `main.rs`, `account::mod`, `ui::accounts`
+- **Consumers**: `main.rs`, `account::mod`, `ui::accounts`, `ui::sessions`
 - **Side Effects**: Filesystem reads/writes, SQLite database updates, symlink replacement.
 
 ### `src/quota.rs` (Role: infra/domain, Lines: 394)
@@ -117,8 +119,8 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
 - **Consumers**: `account::store`, `ui::accounts`
 - **Side Effects**: HTTPS POST to `daily-cloudcode-pa.googleapis.com`, disk read/write to `~/.gemini-accounts/.quota_cache.json`.
 
-### `src/session.rs` (Role: domain/infra, Lines: 283)
-- **Responsibility**: Discovers conversation sessions across brain directories, strips terminal artifacts / executor errors, and sanitizes prompt summaries.
+### `src/session.rs` (Role: domain/infra, Lines: ~300)
+- **Responsibility**: Discovers conversation sessions across brain directories and named profiles, derives owning account from path, dedupes by `(account, cid)`, strips terminal artifacts / executor errors, and sanitizes prompt summaries.
 - **Imports**: `chrono::{DateTime, Local}`, `serde_json::Value`, `walkdir::WalkDir`
 - **Types & Enums**:
   ```rust
@@ -131,17 +133,19 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
       pub line_count: usize,
       pub summary: String,
       pub full_prompt: String,
+      pub account: String, // profile prefix, or "default"
   }
   ```
 - **Public Functions & Signatures**:
   ```rust
   pub fn format_bytes(bytes: u64) -> String
   pub fn clean_user_text(raw: &str) -> String
+  pub fn account_from_path(path: &std::path::Path) -> String
   pub fn sanitize_summary(raw: &str) -> String
   pub fn scan_sessions() -> Vec<SessionInfo>
   ```
 - **Consumers**: `ui::sessions`, `ui::widgets`
-- **Side Effects**: Recursive directory traversal of `~/.gemini/antigravity-cli/brain`.
+- **Side Effects**: Recursive directory traversal of `~/.gemini/antigravity-cli/brain`, `~/.antigravity-agent/brain`, and `~/.gemini-profiles/*/{antigravity-cli,gemini/antigravity-cli}/brain`.
 
 ### `src/ui/mod.rs` (Role: tui, Lines: 43)
 - **Responsibility**: Crossterm raw terminal guard and TUI lifecycle switching between Accounts and Sessions views.
@@ -162,8 +166,9 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
 - **Responsibility**: Interactive account switcher table, live background quota refresh thread, search filtering, and keybindings.
 - **Consumers**: `ui::mod`, `ui::sessions`
 
-### `src/ui/sessions.rs` (Role: tui, Lines: 269)
-- **Responsibility**: Interactive session explorer table, prompt detail inspection pane, and external `agy --conversation <cid>` execution.
+### `src/ui/sessions.rs` (Role: tui, Lines: ~360)
+- **Responsibility**: Interactive session explorer table with Account column, prompt detail pane, in-TUI account-switch confirmation overlay (shows remaining quota), and `agy --conversation <cid>` execution after `set_active_account` when the session owner differs from the active account.
+- **Outcomes**: `Quit`, `SwitchToAccounts`, `ResumeSession(cid)`, `SwitchAndResume { account, cid }`.
 - **Consumers**: `ui::mod`, `ui::accounts`
 
 ### `src/ui/widgets.rs` (Role: tui/presentation, Lines: 357)
@@ -191,6 +196,7 @@ cargo fmt --check
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-10-05**: Session Explorer now shows the owning account per conversation and warns before resuming a session from a different account. Added `SessionInfo.account`, `account_from_path()`, `(account, cid)` dedupe, an in-TUI `[y/N]` switch overlay with remaining-quota display, and `SessionsOutcome::SwitchAndResume` (auto `set_active_account` before `agy`).
 - **2026-09-26**: Updated project description across GitHub metadata, Cargo.toml, README.md, and CLI help to `"Instant multi-account switcher for Antigravity CLI (agy)"` and released `v0.0.7`.
 - **2026-09-28**: Added modular Linux/macOS keyring backends (`Security.framework` Keychain & Secret Service), native macOS Apple Silicon and Intel release assets, architecture-aware installer, patched cross-target dead-code guards, and released `v0.0.8`.
 - **2026-09-26**: Aligned quota metrics vertical divider (`TARGET_MODEL_BLOCK_WIDTH = 31`) and right-aligned percentage meters (`{:>3}%`) across multi-window and single-window tiers (`v0.0.6`). Re-captured high-resolution showcase screenshot (`assets/agym_dashboard.png`) with continuous Gaussian privacy blur.

@@ -10,8 +10,8 @@ pub mod store;
 // Public re-exports for backward compatibility across the codebase
 pub use keyring::clear_keyring_token;
 pub use store::{
-    list_account_infos, list_account_infos_cached, remove_account, save_current_account,
-    set_active_account, AccountInfo,
+    current_active_email, email_prefix, list_account_infos, list_account_infos_cached,
+    remove_account, save_current_account, set_active_account, AccountInfo,
 };
 
 use anyhow::Result;

@@ -75,6 +75,17 @@ pub fn get_gemini_link() -> PathBuf {
     get_home().join(GEMINI_LINK_NAME)
 }
 
+/// Resolves the email of the currently active keyring account, if any.
+pub fn current_active_email() -> Option<String> {
+    let token = get_current_keyring_token()?;
+    extract_email_from_token_json(&token)
+}
+
+/// Resolves the saved profile prefix (the email local-part) for an account email.
+pub fn email_prefix(email: &str) -> &str {
+    email.split('@').next().unwrap_or(email)
+}
+
 /// Saves the current credential from the OS keyring as a named `<email>.json` profile.
 ///
 /// Invalidates the quota cache upon a successful write so newly saved credentials
@@ -110,7 +121,7 @@ pub fn update_sqlite_db(email: &str) -> Result<()> {
 
 /// Updates the `~/.gemini` profile symlink to point to the active account's profile directory.
 pub fn update_gemini_profile(email: &str) -> Result<()> {
-    let prefix = email.split('@').next().unwrap_or(email);
+    let prefix = email_prefix(email);
     let prof_dir = get_profiles_dir().join(prefix);
     fs::create_dir_all(&prof_dir)?;
 

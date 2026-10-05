@@ -3,18 +3,22 @@
 //! Provides the split-screen TUI interface for inspecting past Antigravity transcripts,
 //! full-prompt previews, and resuming sessions via external `agy --conversation <cid>` execution.
 
+use crate::account::{
+    current_active_email, email_prefix, list_account_infos_cached, set_active_account,
+};
 use crate::session::{scan_sessions, SessionInfo};
 use crate::ui::widgets::{
-    filter_session_indices, format_bytes, format_session_detail, format_sessions_header,
-    next_index, prev_index, style_dimmed, style_header, style_selected, style_warning,
-    EVENT_POLL_TIMEOUT, HELP_SESSIONS_DEFAULT, TITLE_SESSION_DETAIL,
+    filter_session_indices, format_bytes, format_resume_prompt, format_session_detail,
+    format_sessions_header, next_index, prev_index, style_dimmed, style_header, style_selected,
+    style_warning, EVENT_POLL_TIMEOUT, HELP_SESSIONS_CONFIRM, HELP_SESSIONS_DEFAULT,
+    TITLE_SESSION_CONFIRM, TITLE_SESSION_DETAIL,
 };
 use crate::ui::{run_accounts_tui, TerminalGuard};
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Row, Table, TableState, Wrap},
     Frame,
 };
 
@@ -27,6 +31,8 @@ pub enum SessionsOutcome {
     SwitchToAccounts,
     /// Launch external `agy` CLI to resume the specified conversation ID.
     ResumeSession(String),
+    /// Switch to the owning account, then resume the conversation.
+    SwitchAndResume { account: String, cid: String },
 }
 
 /// State machine for the interactive Sessions TUI view.
@@ -41,6 +47,8 @@ pub struct SessionsApp {
     pub searching: bool,
     /// Whether the detail preview pane is currently expanded.
     pub show_detail: bool,
+    /// Pending switch confirmation awaiting y/N, holding the session index to resume.
+    pub pending_switch: Option<usize>,
 }
 
 impl SessionsApp {
@@ -58,6 +66,54 @@ impl SessionsApp {
             filter: String::new(),
             searching: false,
             show_detail: false,
+            pending_switch: None,
+        }
+    }
+
+    /// Returns the currently active account prefix (email local-part), or empty if unknown.
+    pub fn active_account() -> String {
+        current_active_email()
+            .map(|e| email_prefix(&e).to_string())
+            .unwrap_or_default()
+    }
+
+    /// Determines whether the selected session needs an account switch before resuming.
+    ///
+    /// Returns `Some(outcome)` immediately when resumable on the active account,
+    /// otherwise records a pending confirmation and returns `None`.
+    fn request_resume(&mut self, filtered_indices: &[usize]) -> Option<SessionsOutcome> {
+        let real_idx = self
+            .state
+            .selected()
+            .and_then(|i| filtered_indices.get(i))
+            .copied()?;
+        let session = self.sessions.get(real_idx)?;
+        let active = Self::active_account();
+
+        if session.account == "default" || session.account == active {
+            return Some(SessionsOutcome::ResumeSession(session.cid.clone()));
+        }
+
+        self.pending_switch = Some(real_idx);
+        None
+    }
+
+    /// Handles keys while the switch confirmation overlay is visible.
+    fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<SessionsOutcome> {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                let idx = self.pending_switch.take()?;
+                let session = self.sessions.get(idx)?;
+                Some(SessionsOutcome::SwitchAndResume {
+                    account: session.account.clone(),
+                    cid: session.cid.clone(),
+                })
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.pending_switch = None;
+                None
+            }
+            _ => None,
         }
     }
 
@@ -67,6 +123,10 @@ impl SessionsApp {
         key: KeyEvent,
         filtered_indices: &[usize],
     ) -> Option<SessionsOutcome> {
+        if self.pending_switch.is_some() {
+            return self.handle_confirm_key(key);
+        }
+
         if self.searching {
             match key.code {
                 KeyCode::Esc => {
@@ -97,12 +157,7 @@ impl SessionsApp {
                 None
             }
             KeyCode::Char('a') | KeyCode::Tab => Some(SessionsOutcome::SwitchToAccounts),
-            KeyCode::Enter => self
-                .state
-                .selected()
-                .and_then(|i| filtered_indices.get(i))
-                .and_then(|&real_idx| self.sessions.get(real_idx))
-                .map(|s| SessionsOutcome::ResumeSession(s.cid.clone())),
+            KeyCode::Enter => self.request_resume(filtered_indices),
             KeyCode::Down | KeyCode::Char('j') => {
                 self.state.select(Some(next_index(
                     self.state.selected(),
@@ -154,6 +209,7 @@ impl SessionsApp {
             .map(|s| {
                 Row::new(vec![
                     s.short_cid.clone(),
+                    s.account.clone(),
                     s.datetime.clone(),
                     format_bytes(s.size_bytes),
                     format!("{} lines", s.line_count),
@@ -166,6 +222,7 @@ impl SessionsApp {
             rows,
             [
                 Constraint::Length(10),
+                Constraint::Length(14),
                 Constraint::Length(18),
                 Constraint::Length(10),
                 Constraint::Length(10),
@@ -173,8 +230,15 @@ impl SessionsApp {
             ],
         )
         .header(
-            Row::new(vec!["CID", "Date/Time", "Size", "Lines", "Prompt Summary"])
-                .style(style_header()),
+            Row::new(vec![
+                "CID",
+                "Account",
+                "Date/Time",
+                "Size",
+                "Lines",
+                "Prompt Summary",
+            ])
+            .style(style_header()),
         )
         .block(Block::default().borders(Borders::ALL))
         .row_highlight_style(style_selected());
@@ -203,7 +267,9 @@ impl SessionsApp {
             2
         };
 
-        let status_text = if self.searching {
+        let status_text = if self.pending_switch.is_some() {
+            HELP_SESSIONS_CONFIRM.to_string()
+        } else if self.searching {
             format!(
                 " Search: {} (Press Enter to confirm, Esc to clear)",
                 self.filter
@@ -216,7 +282,61 @@ impl SessionsApp {
             .style(style_dimmed())
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(footer, chunks[footer_idx]);
+
+        if let Some(idx) = self.pending_switch {
+            self.render_confirm_overlay(frame, idx);
+        }
     }
+
+    /// Renders the centered account-switch confirmation overlay with quota info.
+    fn render_confirm_overlay(&self, frame: &mut Frame, session_idx: usize) {
+        let Some(session) = self.sessions.get(session_idx) else {
+            return;
+        };
+        let active = Self::active_account();
+        let quota = list_account_infos_cached()
+            .into_iter()
+            .find(|a| email_prefix(&a.email) == session.account)
+            .and_then(|a| a.quota);
+
+        let text = format_resume_prompt(session, &active, quota.as_ref());
+        let area = centered_rect(70, 40, frame.area());
+        frame.render_widget(Clear, area);
+        let overlay = Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .style(style_warning())
+            .block(
+                Block::default()
+                    .title(TITLE_SESSION_CONFIRM)
+                    .borders(Borders::ALL)
+                    .border_style(style_warning()),
+            );
+        frame.render_widget(overlay, area);
+    }
+}
+
+/// Computes a centered rectangle of the given percentage width/height.
+fn centered_rect(
+    percent_x: u16,
+    percent_y: u16,
+    area: ratatui::layout::Rect,
+) -> ratatui::layout::Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
 }
 
 impl Default for SessionsApp {
@@ -254,15 +374,22 @@ pub fn run_sessions_tui() -> Result<()> {
     match outcome {
         SessionsOutcome::Quit => Ok(()),
         SessionsOutcome::SwitchToAccounts => run_accounts_tui(),
-        SessionsOutcome::ResumeSession(cid) => {
-            let status = std::process::Command::new("agy")
-                .args(["--conversation", &cid])
-                .status()
-                .with_context(|| format!("Failed to execute 'agy --conversation {cid}'"))?;
-            if !status.success() {
-                eprintln!("'agy' exited with status: {status}");
-            }
-            Ok(())
+        SessionsOutcome::ResumeSession(cid) => launch_agy_conversation(&cid),
+        SessionsOutcome::SwitchAndResume { account, cid } => {
+            set_active_account(&account)?;
+            launch_agy_conversation(&cid)
         }
     }
+}
+
+/// Executes `agy --conversation <cid>` in the restored terminal.
+fn launch_agy_conversation(cid: &str) -> Result<()> {
+    let status = std::process::Command::new("agy")
+        .args(["--conversation", cid])
+        .status()
+        .with_context(|| format!("Failed to execute 'agy --conversation {cid}'"))?;
+    if !status.success() {
+        eprintln!("'agy' exited with status: {status}");
+    }
+    Ok(())
 }

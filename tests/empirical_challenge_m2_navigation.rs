@@ -88,6 +88,7 @@ pub mod session {
         pub line_count: usize,
         pub summary: String,
         pub full_prompt: String,
+        pub account: String,
     }
 
     pub fn format_bytes(bytes: u64) -> String {
@@ -128,6 +129,7 @@ fn make_test_session(cid: &str, short_cid: &str, summary: &str) -> SessionInfo {
         line_count: 120,
         summary: summary.to_string(),
         full_prompt: format!("Adversarial prompt for session {cid}"),
+        account: "default".to_string(),
     }
 }
 
@@ -609,6 +611,12 @@ fn test_adv_presentation_formatting_bounds() {
     assert!(!HELP_ACCOUNTS_ALREADY_RUNNING.is_empty());
     assert!(!HELP_SESSIONS_DEFAULT.is_empty());
     assert_eq!(TITLE_SESSION_DETAIL, " 🔍 Session Detail Preview ");
+    assert!(!HELP_SESSIONS_CONFIRM.is_empty());
+    assert!(!TITLE_SESSION_CONFIRM.is_empty());
+
+    let prompt = format_resume_prompt(&sess, "activeuser", None);
+    assert!(prompt.contains("belongs to account 'default'"));
+    assert!(prompt.contains("Switch to 'default' and resume?"));
 
     let _ = style_header();
     let _ = style_selected();

@@ -24,6 +24,9 @@ pub struct SessionInfo {
     pub summary: String,
     /// Cleaned multi-line text of the conversation's first prompt.
     pub full_prompt: String,
+    /// Profile that owns this transcript: a `~/.gemini-profiles/<prefix>` name,
+    /// or `"default"` for the top-level `~/.gemini` / `~/.antigravity-agent` brains.
+    pub account: String,
 }
 
 pub fn format_bytes(bytes: u64) -> String {
@@ -86,6 +89,27 @@ pub fn clean_user_text(raw: &str) -> String {
         .join("\n");
 
     cleaned.trim().to_string()
+}
+
+/// Derives the owning profile name from a transcript path.
+///
+/// Returns the `~/.gemini-profiles/<prefix>` directory name when the path lives
+/// under a named profile, or `"default"` for the top-level Gemini / Antigravity brains.
+pub fn account_from_path(path: &std::path::Path) -> String {
+    const PROFILES_DIR: &str = ".gemini-profiles";
+    let mut components = path.components().peekable();
+    while let Some(comp) = components.next() {
+        let name = comp.as_os_str().to_string_lossy();
+        if name == PROFILES_DIR {
+            if let Some(profile) = components.peek() {
+                let profile_name = profile.as_os_str().to_string_lossy().to_string();
+                if !profile_name.is_empty() && !profile_name.starts_with('.') {
+                    return profile_name;
+                }
+            }
+        }
+    }
+    "default".to_string()
 }
 
 pub fn sanitize_summary(raw: &str) -> String {
@@ -181,6 +205,7 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
 
                 let full_prompt = clean_user_text(&raw_prompt);
                 let summary = sanitize_summary(&raw_prompt);
+                let account = account_from_path(path);
 
                 let cid = path
                     .ancestors()
@@ -217,11 +242,13 @@ pub fn scan_sessions() -> Vec<SessionInfo> {
                     } else {
                         full_prompt
                     },
+                    account: account.clone(),
                 };
 
-                let existing = session_map.get(&cid);
+                let key = format!("{account}/{cid}");
+                let existing = session_map.get(&key);
                 if existing.is_none_or(|e| modified_ts > e.timestamp) {
-                    session_map.insert(cid, item);
+                    session_map.insert(key, item);
                 }
             }
         }

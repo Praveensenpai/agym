@@ -23,6 +23,7 @@ fn make_sess(cid: &str, short_cid: &str, summary: &str) -> SessionInfo {
         line_count: 50,
         summary: summary.to_string(),
         full_prompt: format!("Prompt for {cid}"),
+        account: "default".to_string(),
     }
 }
 

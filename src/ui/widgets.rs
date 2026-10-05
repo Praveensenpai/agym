@@ -36,8 +36,12 @@ pub const HELP_ACCOUNTS_ALREADY_RUNNING: &str = " ⏳ Refresh is already running
 /// Default shortcuts help text for the Session Explorer view.
 pub const HELP_SESSIONS_DEFAULT: &str =
     " [Enter] Resume | [Space/v] Toggle Preview | [a] Accounts | [/] Filter | [q] Quit";
+/// Help text shown while the switch-account confirmation overlay is active.
+pub const HELP_SESSIONS_CONFIRM: &str = " [y/Enter] Switch & Resume | [n/Esc] Cancel";
 /// Title displayed on the Session Detail Preview pane border.
 pub const TITLE_SESSION_DETAIL: &str = " 🔍 Session Detail Preview ";
+/// Title displayed on the switch-account confirmation overlay border.
+pub const TITLE_SESSION_CONFIRM: &str = " ⚠ Account Switch Required ";
 
 // --- Styling Helpers ---
 
@@ -344,8 +348,9 @@ pub fn format_sessions_header(total: usize, filter: &str) -> String {
 pub fn format_session_detail(session: Option<&SessionInfo>) -> String {
     match session {
         Some(s) => format!(
-            "ID: {}\nDate: {}\nSize: {} | Lines: {}\n\n{}",
+            "ID: {}\nAccount: {}\nDate: {}\nSize: {} | Lines: {}\n\n{}",
             s.cid,
+            s.account,
             s.datetime,
             format_bytes(s.size_bytes),
             s.line_count,
@@ -353,6 +358,33 @@ pub fn format_session_detail(session: Option<&SessionInfo>) -> String {
         ),
         None => "No session selected.".to_string(),
     }
+}
+
+/// Formats the confirmation overlay text shown when a session belongs to a
+/// different account than the currently active one.
+#[must_use]
+pub fn format_resume_prompt(
+    session: &SessionInfo,
+    active_account: &str,
+    quota: Option<&AccountQuotaInfo>,
+) -> String {
+    let quota_line = match quota {
+        Some(q) => format!("\nRemaining quota: {}", q.display_badge()),
+        None => "\nRemaining quota: unavailable".to_string(),
+    };
+    let exhausted = quota.is_some_and(|q| {
+        q.gemini_percent.unwrap_or(100) == 0 && q.claude_percent.unwrap_or(100) == 0
+    });
+    let exhausted_line = if exhausted {
+        "\n\n⚠ Warning: this account appears to have no quota left."
+    } else {
+        ""
+    };
+
+    format!(
+        "This conversation belongs to account '{}'.\n\nActive account: '{}'.\n{}{}\n\nSwitch to '{}' and resume? [y/N]",
+        session.account, active_account, quota_line, exhausted_line, session.account
+    )
 }
 
 /// Formats the 15-second refresh cooldown remaining notification message.
