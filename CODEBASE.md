@@ -166,8 +166,8 @@ main.rs ──> clap CLI Parser ──┬──> [Save/Switch Account] ──> a
 - **Responsibility**: Interactive account switcher table, live background quota refresh thread, search filtering, and keybindings.
 - **Consumers**: `ui::mod`, `ui::sessions`
 
-### `src/ui/sessions.rs` (Role: tui, Lines: ~360)
-- **Responsibility**: Interactive session explorer table with Account column, prompt detail pane, in-TUI account-switch confirmation overlay (shows remaining quota), and `agy --conversation <cid>` execution after `set_active_account` when the session owner differs from the active account.
+### `src/ui/sessions.rs` (Role: tui, Lines: ~400)
+- **Responsibility**: Interactive session explorer table with Account column, prompt detail pane, in-TUI account-switch confirmation overlay rendering quota info plus colored keyboard-navigable Yes/No buttons, and `agy --conversation <cid>` execution after `set_active_account` when the session owner differs from the active account.
 - **Outcomes**: `Quit`, `SwitchToAccounts`, `ResumeSession(cid)`, `SwitchAndResume { account, cid }`.
 - **Consumers**: `ui::mod`, `ui::accounts`
 
@@ -196,6 +196,7 @@ cargo fmt --check
 ```
 
 ## 6. Recent Iteration Changes
+- **2026-10-05**: Replaced the typed `[y/N]` switch prompt with colored, keyboard-navigable Yes/No buttons in the Session Explorer overlay. `Yes` (green) is focused by default; `←/→`/`Tab` toggles focus, `Enter` activates the focused button, `y`/`n`/`Esc` remain shortcuts. Added `ConfirmState`, `format_resume_buttons()`, and `BUTTON_YES_LABEL`/`BUTTON_NO_LABEL`.
 - **2026-10-05**: Session Explorer now shows the owning account per conversation and warns before resuming a session from a different account. Added `SessionInfo.account`, `account_from_path()`, `(account, cid)` dedupe, an in-TUI `[y/N]` switch overlay with remaining-quota display, and `SessionsOutcome::SwitchAndResume` (auto `set_active_account` before `agy`).
 - **2026-09-26**: Updated project description across GitHub metadata, Cargo.toml, README.md, and CLI help to `"Instant multi-account switcher for Antigravity CLI (agy)"` and released `v0.0.7`.
 - **2026-09-28**: Added modular Linux/macOS keyring backends (`Security.framework` Keychain & Secret Service), native macOS Apple Silicon and Intel release assets, architecture-aware installer, patched cross-target dead-code guards, and released `v0.0.8`.

@@ -617,6 +617,12 @@ fn test_adv_presentation_formatting_bounds() {
     let prompt = format_resume_prompt(&sess, "activeuser", None);
     assert!(prompt.contains("belongs to account 'default'"));
     assert!(prompt.contains("Switch to 'default' and resume?"));
+    assert!(!prompt.contains("[y/N]"));
+
+    let yes_line = format_resume_buttons(true);
+    assert!(yes_line.spans.iter().any(|s| s.content.contains("Yes")));
+    let no_line = format_resume_buttons(false);
+    assert!(no_line.spans.iter().any(|s| s.content.contains("No")));
 
     let _ = style_header();
     let _ = style_selected();

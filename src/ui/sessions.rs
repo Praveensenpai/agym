@@ -8,10 +8,10 @@ use crate::account::{
 };
 use crate::session::{scan_sessions, SessionInfo};
 use crate::ui::widgets::{
-    filter_session_indices, format_bytes, format_resume_prompt, format_session_detail,
-    format_sessions_header, next_index, prev_index, style_dimmed, style_header, style_selected,
-    style_warning, EVENT_POLL_TIMEOUT, HELP_SESSIONS_CONFIRM, HELP_SESSIONS_DEFAULT,
-    TITLE_SESSION_CONFIRM, TITLE_SESSION_DETAIL,
+    filter_session_indices, format_bytes, format_resume_buttons, format_resume_prompt,
+    format_session_detail, format_sessions_header, next_index, prev_index, style_dimmed,
+    style_header, style_selected, style_warning, EVENT_POLL_TIMEOUT, HELP_SESSIONS_CONFIRM,
+    HELP_SESSIONS_DEFAULT, TITLE_SESSION_CONFIRM, TITLE_SESSION_DETAIL,
 };
 use crate::ui::{run_accounts_tui, TerminalGuard};
 use anyhow::{Context, Result};
@@ -35,6 +35,15 @@ pub enum SessionsOutcome {
     SwitchAndResume { account: String, cid: String },
 }
 
+/// State for the account-switch confirmation overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmState {
+    /// Index into `SessionsApp::sessions` for the session to resume.
+    pub session_idx: usize,
+    /// Whether the affirmative (Yes) button currently holds focus.
+    pub yes_focused: bool,
+}
+
 /// State machine for the interactive Sessions TUI view.
 pub struct SessionsApp {
     /// List of scanned session transcripts.
@@ -47,8 +56,8 @@ pub struct SessionsApp {
     pub searching: bool,
     /// Whether the detail preview pane is currently expanded.
     pub show_detail: bool,
-    /// Pending switch confirmation awaiting y/N, holding the session index to resume.
-    pub pending_switch: Option<usize>,
+    /// Pending switch confirmation overlay state, if visible.
+    pub pending_switch: Option<ConfirmState>,
 }
 
 impl SessionsApp {
@@ -94,23 +103,44 @@ impl SessionsApp {
             return Some(SessionsOutcome::ResumeSession(session.cid.clone()));
         }
 
-        self.pending_switch = Some(real_idx);
+        self.pending_switch = Some(ConfirmState {
+            session_idx: real_idx,
+            yes_focused: true,
+        });
         None
+    }
+
+    /// Activates the currently focused confirmation button.
+    fn confirm_activate(&mut self) -> Option<SessionsOutcome> {
+        let state = self.pending_switch.take()?;
+        if !state.yes_focused {
+            return None;
+        }
+        let session = self.sessions.get(state.session_idx)?;
+        Some(SessionsOutcome::SwitchAndResume {
+            account: session.account.clone(),
+            cid: session.cid.clone(),
+        })
     }
 
     /// Handles keys while the switch confirmation overlay is visible.
     fn handle_confirm_key(&mut self, key: KeyEvent) -> Option<SessionsOutcome> {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                let idx = self.pending_switch.take()?;
-                let session = self.sessions.get(idx)?;
-                Some(SessionsOutcome::SwitchAndResume {
-                    account: session.account.clone(),
-                    cid: session.cid.clone(),
-                })
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                if let Some(state) = self.pending_switch.as_mut() {
+                    state.yes_focused = true;
+                }
+                self.confirm_activate()
             }
+            KeyCode::Enter => self.confirm_activate(),
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.pending_switch = None;
+                None
+            }
+            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
+                if let Some(state) = self.pending_switch.as_mut() {
+                    state.yes_focused = !state.yes_focused;
+                }
                 None
             }
             _ => None,
@@ -283,14 +313,15 @@ impl SessionsApp {
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(footer, chunks[footer_idx]);
 
-        if let Some(idx) = self.pending_switch {
-            self.render_confirm_overlay(frame, idx);
+        if let Some(state) = &self.pending_switch {
+            self.render_confirm_overlay(frame, state);
         }
     }
 
-    /// Renders the centered account-switch confirmation overlay with quota info.
-    fn render_confirm_overlay(&self, frame: &mut Frame, session_idx: usize) {
-        let Some(session) = self.sessions.get(session_idx) else {
+    /// Renders the centered account-switch confirmation overlay with quota info
+    /// and colored Yes/No buttons.
+    fn render_confirm_overlay(&self, frame: &mut Frame, state: &ConfirmState) {
+        let Some(session) = self.sessions.get(state.session_idx) else {
             return;
         };
         let active = Self::active_account();
@@ -299,10 +330,17 @@ impl SessionsApp {
             .find(|a| email_prefix(&a.email) == session.account)
             .and_then(|a| a.quota);
 
-        let text = format_resume_prompt(session, &active, quota.as_ref());
-        let area = centered_rect(70, 40, frame.area());
+        let body = format_resume_prompt(session, &active, quota.as_ref());
+        let buttons = format_resume_buttons(state.yes_focused);
+        let area = centered_rect(70, 50, frame.area());
         frame.render_widget(Clear, area);
-        let overlay = Paragraph::new(text)
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(3), Constraint::Length(3)])
+            .split(area);
+
+        let overlay = Paragraph::new(body)
             .wrap(Wrap { trim: false })
             .style(style_warning())
             .block(
@@ -311,7 +349,12 @@ impl SessionsApp {
                     .borders(Borders::ALL)
                     .border_style(style_warning()),
             );
-        frame.render_widget(overlay, area);
+        frame.render_widget(overlay, chunks[0]);
+
+        let button_bar = Paragraph::new(buttons)
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(Block::default().borders(Borders::TOP));
+        frame.render_widget(button_bar, chunks[1]);
     }
 }
 

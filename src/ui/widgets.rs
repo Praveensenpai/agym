@@ -37,11 +37,16 @@ pub const HELP_ACCOUNTS_ALREADY_RUNNING: &str = " ⏳ Refresh is already running
 pub const HELP_SESSIONS_DEFAULT: &str =
     " [Enter] Resume | [Space/v] Toggle Preview | [a] Accounts | [/] Filter | [q] Quit";
 /// Help text shown while the switch-account confirmation overlay is active.
-pub const HELP_SESSIONS_CONFIRM: &str = " [y/Enter] Switch & Resume | [n/Esc] Cancel";
+pub const HELP_SESSIONS_CONFIRM: &str =
+    " [←/→ or Tab] Select | [Enter] Confirm | [y] Yes | [n/Esc] Cancel";
 /// Title displayed on the Session Detail Preview pane border.
 pub const TITLE_SESSION_DETAIL: &str = " 🔍 Session Detail Preview ";
 /// Title displayed on the switch-account confirmation overlay border.
 pub const TITLE_SESSION_CONFIRM: &str = " ⚠ Account Switch Required ";
+/// Label for the affirmative switch-and-resume button.
+pub const BUTTON_YES_LABEL: &str = " Yes, switch & resume ";
+/// Label for the negative cancel button.
+pub const BUTTON_NO_LABEL: &str = " No, cancel ";
 
 // --- Styling Helpers ---
 
@@ -382,9 +387,34 @@ pub fn format_resume_prompt(
     };
 
     format!(
-        "This conversation belongs to account '{}'.\n\nActive account: '{}'.\n{}{}\n\nSwitch to '{}' and resume? [y/N]",
+        "This conversation belongs to account '{}'.\n\nActive account: '{}'.\n{}{}\n\nSwitch to '{}' and resume?",
         session.account, active_account, quota_line, exhausted_line, session.account
     )
+}
+
+/// Builds a styled button line, highlighting the focused button.
+#[must_use]
+pub fn format_resume_buttons(yes_focused: bool) -> Line<'static> {
+    let yes_style = button_style(yes_focused, Color::Green);
+    let no_style = button_style(!yes_focused, Color::Red);
+    Line::from(vec![
+        Span::styled(format!("  {}  ", BUTTON_YES_LABEL), yes_style),
+        Span::raw("     "),
+        Span::styled(format!("  {}  ", BUTTON_NO_LABEL), no_style),
+    ])
+}
+
+/// Returns the button style for the given focus state and base color.
+#[must_use]
+fn button_style(focused: bool, color: Color) -> Style {
+    if focused {
+        Style::default()
+            .fg(Color::Black)
+            .bg(color)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(color).add_modifier(Modifier::BOLD)
+    }
 }
 
 /// Formats the 15-second refresh cooldown remaining notification message.
